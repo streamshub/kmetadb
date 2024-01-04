@@ -1,7 +1,7 @@
 package com.github.eyefloaters.kmetadb;
 
-import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 import jakarta.enterprise.context.ApplicationScoped;
@@ -13,11 +13,15 @@ import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logging.Logger;
 
 import io.smallrye.common.annotation.Identifier;
 
 @ApplicationScoped
 public class AdminFactory {
+
+    @Inject
+    Logger log;
 
     @Inject
     Config config;
@@ -34,24 +38,47 @@ public class AdminFactory {
     Map<String, Admin> getAdmins() {
         return clusterNames.entrySet()
             .stream()
-            .map(clusterName -> {
-                Map<String, Object> copy = new HashMap<>();
-
-                for (String configName : AdminClientConfig.configNames()) {
-                    if (defaultClusterConfigs.containsKey(configName)) {
-                        copy.put(configName, defaultClusterConfigs.get(configName));
-                    }
-
-                    config.getOptionalValue("kmetadb.kafka." + clusterName.getKey() + '.' + configName, String.class)
-                        .ifPresent(cfg -> copy.put(configName, cfg));
-                }
-
-                return Map.entry(clusterName.getValue(), Admin.create(copy));
+            .map(cluster -> {
+                var client = Admin.create(buildConfig(cluster.getKey()));
+                return Map.entry(cluster.getValue(), client);
             })
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     void closeAdmins(@Disposes Map<String, Admin> admins) {
         admins.values().parallelStream().forEach(Admin::close);
+    }
+
+    Map<String, Object> buildConfig(String clusterKey) {
+        return AdminClientConfig.configNames()
+            .stream()
+            .map(configName -> getClusterConfig(clusterKey, configName)
+                    .or(() -> getDefaultConfig(clusterKey, configName))
+                    .map(configValue -> Map.entry(configName, configValue)))
+            .filter(Optional::isPresent)
+            .map(Optional::get)
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
+
+    Optional<String> getClusterConfig(String clusterKey, String configName) {
+        return config.getOptionalValue("kmetadb.kafka." + clusterKey + '.' + configName, String.class)
+            .map(cfg -> {
+                log.debugf("OVERRIDE config %s for cluster %s", configName, clusterKey);
+                return removeQuotes(cfg);
+            });
+    }
+
+    Optional<String> getDefaultConfig(String clusterKey, String configName) {
+        if (defaultClusterConfigs.containsKey(configName)) {
+            log.debugf("DEFAULT config %s for cluster %s", configName, clusterKey);
+            String cfg = defaultClusterConfigs.get(configName).toString();
+            return Optional.of(removeQuotes(cfg));
+        }
+
+        return Optional.empty();
+    }
+
+    String removeQuotes(String cfg) {
+        return cfg.replaceAll("(^[\"'])|([\"']$)", "");
     }
 }
