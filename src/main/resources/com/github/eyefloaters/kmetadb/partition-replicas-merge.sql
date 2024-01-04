@@ -4,6 +4,9 @@ USING ( SELECT t0.cluster_id
              , t2.id     AS node_id
              , ?         AS leader
              , ?         AS in_sync
+             , ?         AS size
+             , ?         AS offset_lag
+             , ?         AS future
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
         FROM   topics t0
         JOIN   topic_partitions t1
@@ -23,6 +26,9 @@ AND t.node_id            = n.node_id
 WHEN MATCHED
     AND t.leader    = n.leader
     AND t.in_sync   = n.in_sync
+    AND t.size       IS NOT DISTINCT FROM n.size
+    AND t.offset_lag IS NOT DISTINCT FROM n.offset_lag
+    AND t.future     IS NOT DISTINCT FROM n.future
   THEN
     UPDATE
     SET refreshed_at = n.refreshed_at
@@ -33,6 +39,9 @@ WHEN MATCHED
     SET refreshed_at = n.refreshed_at
       , leader = n.leader
       , in_sync = n.in_sync
+      , size = n.size
+      , offset_lag = n.offset_lag
+      , future = n.future
 
 WHEN NOT MATCHED
   THEN
@@ -41,6 +50,9 @@ WHEN NOT MATCHED
            , node_id
            , leader
            , in_sync
+           , size
+           , offset_lag
+           , future
            , discovered_at
            , modified_at
            , refreshed_at
@@ -50,6 +62,9 @@ WHEN NOT MATCHED
            , n.node_id
            , n.leader
            , n.in_sync
+           , n.size
+           , n.offset_lag
+           , n.future
            , n.refreshed_at
            , n.refreshed_at
            , n.refreshed_at

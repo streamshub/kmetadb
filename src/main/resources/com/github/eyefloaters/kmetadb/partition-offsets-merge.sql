@@ -19,9 +19,9 @@ AND t.topic_partition_id = n.topic_partition_id
 AND t.offset_type        = n.offset_type
 
 WHEN MATCHED
-    AND t."offset"      = n."offset"
-    AND t."timestamp"   = n."timestamp"
-    AND t.leader_epoch  = n.leader_epoch
+    AND t."offset"      IS NOT DISTINCT FROM n."offset"
+    AND t."timestamp"   IS NOT DISTINCT FROM n."timestamp"
+    AND t.leader_epoch  IS NOT DISTINCT FROM n.leader_epoch
   THEN
     UPDATE
     SET refreshed_at = n.refreshed_at
@@ -30,8 +30,8 @@ WHEN MATCHED
   THEN
     UPDATE
     SET refreshed_at = n.refreshed_at
-      , "offset" = n."offset"
-      , "timestamp" = n."timestamp"
+      , "offset"     = n."offset"
+      , "timestamp"  = n."timestamp"
       , leader_epoch = n.leader_epoch
 
 WHEN NOT MATCHED
