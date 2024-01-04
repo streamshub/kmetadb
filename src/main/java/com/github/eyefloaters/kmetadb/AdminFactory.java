@@ -1,4 +1,4 @@
-package com.github.eyefloaters;
+package com.github.eyefloaters.kmetadb;
 
 import java.util.HashMap;
 import java.util.Map;
