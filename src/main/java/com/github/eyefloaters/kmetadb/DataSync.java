@@ -177,7 +177,6 @@ public class DataSync {
             .join();
 
         List<TopicDescription> topicDescriptions = new ArrayList<>();
-        Map<Uuid, Map<Integer, Map<String, ListOffsetsResult.ListOffsetsResultInfo>>> topicOffsets = new HashMap<>();
 
         adminClient.describeTopics(
                 TopicCollection.ofTopicIds(topicUuids.keySet()),
@@ -201,49 +200,7 @@ public class DataSync {
             .map(CompletionStage::toCompletableFuture)
             .collect(awaitingAll())
             .thenRunAsync(() -> {
-                Map<String, Uuid> topicNames = new HashMap<>();
 
-                var topicPartitions = topicDescriptions
-                        .stream()
-                        .map(d -> {
-                            topicNames.put(d.name(), d.topicId());
-                            return d;
-                        })
-                        .flatMap(d -> d.partitions()
-                                .stream()
-                                .map(p -> new TopicPartition(d.name(), p.partition())))
-                        .toList();
-
-                OFFSET_SPECS.entrySet()
-                    .stream()
-                    .flatMap(spec -> {
-                        var request = topicPartitions.stream()
-                            .map(p -> Map.entry(p, spec.getValue()))
-                            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-
-                        var result = adminClient.listOffsets(request);
-
-                        return topicPartitions.stream()
-                            .map(partition ->
-                                result.partitionResult(partition)
-                                    .toCompletionStage()
-                                    .thenAccept(offset ->
-                                        topicOffsets.computeIfAbsent(topicNames.get(partition.topic()), k -> new HashMap<>())
-                                            .computeIfAbsent(partition.partition(), k -> new HashMap<>())
-                                            .put(spec.getKey(), offset))
-                                    .exceptionally(error -> {
-                                        log.warnf("Exception fetching %s topic offsets %s{name=%s} in cluster %s: %s",
-                                                spec.getKey(),
-                                                topicNames.get(partition.topic()),
-                                                partition.topic(),
-                                                cluster.id(),
-                                                error.getMessage());
-                                        return null;
-                                    }));
-                    })
-                    .map(CompletionStage::toCompletableFuture)
-                    .collect(awaitingAll())
-                    .join();
             }, exec)
             .thenRunAsync(() -> {
                 if (topicDescriptions.isEmpty()) {
@@ -266,39 +223,6 @@ public class DataSync {
                         }
 
                         logRefresh("topic_partitions", t0, stmt.executeBatch());
-                    }
-
-                    try (var stmt = connection.prepareStatement(sql("partition-offsets-merge"))) {
-                        Instant t0 = Instant.now();
-
-                        for (var topic : topicOffsets.entrySet()) {
-                            for (var partition : topic.getValue().entrySet()) {
-                                for (var offset : partition.getValue().entrySet()) {
-                                    Long offsetValue = Optional.of(offset.getValue().offset())
-                                        .filter(o -> o >= 0)
-                                        .orElse(null);
-
-                                    Timestamp timestamp = Optional.of(offset.getValue().timestamp())
-                                        .filter(ts -> ts >= 0)
-                                        .map(Instant::ofEpochMilli)
-                                        .map(Timestamp::from)
-                                        .orElse(null);
-
-                                    int p = 0;
-                                    stmt.setString(++p, offset.getKey());
-                                    stmt.setObject(++p, offsetValue);
-                                    stmt.setTimestamp(++p, timestamp);
-                                    stmt.setObject(++p, offset.getValue().leaderEpoch().orElse(null));
-                                    stmt.setTimestamp(++p, now);
-                                    stmt.setInt(++p, cluster.id());
-                                    stmt.setString(++p, topic.getKey().toString());
-                                    stmt.setInt(++p, partition.getKey());
-                                    stmt.addBatch();
-                                }
-                            }
-                        }
-
-                        logRefresh("partition_offsets", t0, stmt.executeBatch());
                     }
 
                     try (var stmt = connection.prepareStatement(sql("partition-replicas-merge"))) {
@@ -350,6 +274,89 @@ public class DataSync {
             .join();
 
         Map<String, Long> groupCounts = refreshConsumerGroups(now, cluster, adminClient);
+
+        /* Topic Offsets */
+        Map<Uuid, Map<Integer, Map<String, ListOffsetsResult.ListOffsetsResultInfo>>> topicOffsets = new HashMap<>();
+        Map<String, Uuid> topicNames = new HashMap<>();
+
+        var topicPartitions = topicDescriptions
+                .stream()
+                .map(d -> {
+                    topicNames.put(d.name(), d.topicId());
+                    return d;
+                })
+                .flatMap(d -> d.partitions()
+                        .stream()
+                        .map(p -> new TopicPartition(d.name(), p.partition())))
+                .toList();
+
+        OFFSET_SPECS.entrySet()
+            .stream()
+            .flatMap(spec -> {
+                var request = topicPartitions.stream()
+                    .map(p -> Map.entry(p, spec.getValue()))
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+                var result = adminClient.listOffsets(request);
+
+                return topicPartitions.stream()
+                    .map(partition ->
+                        result.partitionResult(partition)
+                            .toCompletionStage()
+                            .thenAccept(offset ->
+                                topicOffsets.computeIfAbsent(topicNames.get(partition.topic()), k -> new HashMap<>())
+                                    .computeIfAbsent(partition.partition(), k -> new HashMap<>())
+                                    .put(spec.getKey(), offset))
+                            .exceptionally(error -> {
+                                log.warnf("Exception fetching %s topic offsets %s{name=%s} in cluster %s: %s",
+                                        spec.getKey(),
+                                        topicNames.get(partition.topic()),
+                                        partition.topic(),
+                                        cluster.id(),
+                                        error.getMessage());
+                                return null;
+                            }));
+            })
+            .map(CompletionStage::toCompletableFuture)
+            .collect(awaitingAll())
+            .join();
+
+        try (var connection = dataSource.getConnection()) {
+            try (var stmt = connection.prepareStatement(sql("partition-offsets-merge"))) {
+                Instant t0 = Instant.now();
+
+                for (var topic : topicOffsets.entrySet()) {
+                    for (var partition : topic.getValue().entrySet()) {
+                        for (var offset : partition.getValue().entrySet()) {
+                            Long offsetValue = Optional.of(offset.getValue().offset())
+                                .filter(o -> o >= 0)
+                                .orElse(null);
+
+                            Timestamp timestamp = Optional.of(offset.getValue().timestamp())
+                                .filter(ts -> ts >= 0)
+                                .map(Instant::ofEpochMilli)
+                                .map(Timestamp::from)
+                                .orElse(null);
+
+                            int p = 0;
+                            stmt.setString(++p, offset.getKey());
+                            stmt.setObject(++p, offsetValue);
+                            stmt.setTimestamp(++p, timestamp);
+                            stmt.setObject(++p, offset.getValue().leaderEpoch().orElse(null));
+                            stmt.setTimestamp(++p, now);
+                            stmt.setInt(++p, cluster.id());
+                            stmt.setString(++p, topic.getKey().toString());
+                            stmt.setInt(++p, partition.getKey());
+                            stmt.addBatch();
+                        }
+                    }
+                }
+
+                logRefresh("partition_offsets", t0, stmt.executeBatch());
+            }
+        } catch (SQLException e1) {
+            reportSQLException(e1, "Failed to refresh `partition_offsets` table");
+        }
 
 //        adminClient.describeConfigs(topicUuids.values()
 //                .stream()
@@ -754,6 +761,8 @@ public class DataSync {
 
         consumer.unsubscribe();
 
+        Timestamp offsetsRefreshedAt = Timestamp.from(Instant.now());
+
         try (var connection = dataSource.getConnection()) {
             try (var stmt = connection.prepareStatement(sql("consumer-group-offsets-merge"))) {
                 Instant t0 = Instant.now();
@@ -774,7 +783,7 @@ public class DataSync {
                         stmt.setTimestamp(++p, offsetTimestamp);
                         stmt.setString(++p, partition.getValue().metadata());
                         stmt.setObject(++p, partition.getValue().leaderEpoch().orElse(null), Types.BIGINT);
-                        stmt.setTimestamp(++p, now);
+                        stmt.setTimestamp(++p, offsetsRefreshedAt);
                         stmt.setInt(++p, cluster.id());
                         stmt.setString(++p, group.getKey());
                         stmt.setString(++p, partition.getKey().topic());
@@ -790,7 +799,7 @@ public class DataSync {
                     ResultSet.TYPE_FORWARD_ONLY,
                     ResultSet.CONCUR_UPDATABLE)) {
                 stmt.setInt(1, cluster.id());
-                stmt.setTimestamp(2, now);
+                stmt.setTimestamp(2, offsetsRefreshedAt);
 
                 try (var results = stmt.executeQuery()) {
                     while (results.next()) {
