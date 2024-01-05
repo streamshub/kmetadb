@@ -3,6 +3,7 @@ USING ( SELECT cg.cluster_id AS cluster_id
              , cg.id         AS consumer_group_id
              , tp.id         AS topic_partition_id
              , ? AS "offset"
+             , CAST(? AS TIMESTAMP WITH TIME ZONE) AS offset_timestamp
              , ? AS metadata
              , ? AS leader_epoch
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
@@ -23,6 +24,7 @@ AND t.topic_partition_id = n.topic_partition_id
 
 WHEN MATCHED
     AND t."offset"     IS NOT DISTINCT FROM n."offset"
+    AND t.offset_timestamp IS NOT DISTINCT FROM n.offset_timestamp
     AND t.metadata     IS NOT DISTINCT FROM n.metadata
     AND t.leader_epoch IS NOT DISTINCT FROM n.leader_epoch
   THEN
@@ -33,6 +35,7 @@ WHEN MATCHED
   THEN
     UPDATE
     SET "offset"       = n."offset"
+      , offset_timestamp = n.offset_timestamp
       , metadata   = n.metadata
       , leader_epoch    = n.leader_epoch
       , modified_at  = n.refreshed_at
@@ -44,6 +47,7 @@ WHEN NOT MATCHED
            , consumer_group_id
            , topic_partition_id
            , "offset"
+           , offset_timestamp
            , metadata
            , leader_epoch
            , discovered_at
@@ -54,6 +58,7 @@ WHEN NOT MATCHED
            , n.consumer_group_id
            , n.topic_partition_id
            , n."offset"
+           , n.offset_timestamp
            , n.metadata
            , n.leader_epoch
            , n.refreshed_at

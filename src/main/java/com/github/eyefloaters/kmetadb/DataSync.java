@@ -12,12 +12,14 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutorService;
@@ -54,6 +56,7 @@ import org.apache.kafka.clients.admin.QuorumInfo;
 import org.apache.kafka.clients.admin.ReplicaInfo;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
+import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Node;
@@ -71,6 +74,9 @@ public class DataSync {
 
     @Inject
     Map<String, Admin> adminClients;
+
+    @Inject
+    Map<String, Consumer<byte[], byte[]>> consumers;
 
     @Inject
     DataSource dataSource;
@@ -114,7 +120,7 @@ public class DataSync {
                 }
             }
 
-            LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(30));
+            LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(10));
         }
     }
 
@@ -425,7 +431,7 @@ public class DataSync {
             reportSQLException(e1, "Failed to refresh `clusters` table");
         }
 
-        return new Cluster(clusterId, kafkaId, nodes, controllerId);
+        return new Cluster(clusterName, clusterId, kafkaId, nodes, controllerId);
     }
 
     Cluster refreshNodes(Timestamp now, Cluster cluster) {
@@ -641,6 +647,101 @@ public class DataSync {
             .collect(awaitingAll())
             .join();
 
+        class TopicPartitionOffset {
+            final TopicPartition partition;
+            final long offset;
+            Timestamp offsetTimestamp;
+
+            TopicPartitionOffset(TopicPartition partition, long offset) {
+                this.partition = partition;
+                this.offset = offset;
+            }
+
+            TopicPartition partition() {
+                return partition;
+            }
+
+            long offset() {
+                return offset;
+            }
+
+            Timestamp offsetTimestamp() {
+                return offsetTimestamp;
+            }
+
+            void offsetTimestamp(Timestamp timestamp) {
+                offsetTimestamp = timestamp;
+            }
+        }
+
+        Consumer<byte[], byte[]> consumer = consumers.get(cluster.name());
+        Set<TopicPartition> allPartitions = groupOffsets.values()
+                .stream()
+                .map(Map::keySet)
+                .flatMap(Collection::stream)
+                .distinct()
+                .collect(Collectors.toSet());
+
+        var beginningOffsets = consumer.beginningOffsets(allPartitions);
+        var endOffsets = consumer.endOffsets(allPartitions);
+
+        Map<TopicPartition, List<TopicPartitionOffset>> targets = groupOffsets.values()
+                .stream()
+                .map(Map::entrySet)
+                .flatMap(Collection::stream)
+                .filter(e -> e.getValue().offset() < endOffsets.get(e.getKey()))
+                .filter(e -> e.getValue().offset() >= beginningOffsets.get(e.getKey()))
+                .map(e -> new TopicPartitionOffset(e.getKey(), e.getValue().offset()))
+                .collect(Collectors.groupingBy(TopicPartitionOffset::partition,
+                         Collectors.toCollection(ArrayList::new)));
+
+        int rounds = targets.values().stream().mapToInt(Collection::size).max().orElse(0);
+
+        Set<TopicPartition> assignments = targets.keySet();
+
+        for (int r = 0; r < rounds; r++) {
+            consumer.assign(assignments);
+
+            int round = r;
+
+            assignments.forEach(topicPartition ->
+                consumer.seek(topicPartition, targets.get(topicPartition).get(round).offset()));
+
+            var result = consumer.poll(Duration.ofSeconds(10));
+            log.debugf("Consumer polled %s record(s) in round %d", result.count(), round);
+
+            assignments.forEach(topicPartition -> {
+                var records = result.records(topicPartition);
+
+                if (records.isEmpty()) {
+                    // format args cast to avoid ambiguous method reference
+                    log.infof("No records returned for offset %d in topic-partition %s-%d",
+                            (Long) targets.get(topicPartition).get(round).offset(),
+                            topicPartition.topic(),
+                            (Integer) topicPartition.partition());
+                } else {
+                    var rec = records.get(0);
+                    Timestamp ts = Timestamp.from(Instant.ofEpochMilli(rec.timestamp()));
+                    targets.get(topicPartition).get(round).offsetTimestamp(ts);
+
+                    log.debugf("Timestamp of offset %d in topic-partition %s-%d is %s",
+                            rec.offset(),
+                            rec.topic(),
+                            rec.partition(),
+                            ts);
+                }
+            });
+
+            // Setup next round's assignments
+            assignments = targets.entrySet()
+                .stream()
+                .filter(e -> e.getValue().size() > round + 1)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toSet());
+        }
+
+        consumer.unsubscribe();
+
         try (var connection = dataSource.getConnection()) {
             try (var stmt = connection.prepareStatement(sql("consumer-group-offsets-merge"))) {
                 Instant t0 = Instant.now();
@@ -648,7 +749,17 @@ public class DataSync {
                 for (var group : groupOffsets.entrySet()) {
                     for (var partition : group.getValue().entrySet()) {
                         int p = 0;
-                        stmt.setLong(++p, partition.getValue().offset());
+                        long committedOffset = partition.getValue().offset();
+                        Timestamp offsetTimestamp = Optional.ofNullable(targets.get(partition.getKey()))
+                            .orElseGet(Collections::emptyList)
+                            .stream()
+                            .filter(tpo -> tpo.offset == committedOffset)
+                            .findFirst()
+                            .map(TopicPartitionOffset::offsetTimestamp)
+                            .orElse(null);
+
+                        stmt.setLong(++p, committedOffset);
+                        stmt.setTimestamp(++p, offsetTimestamp);
                         stmt.setString(++p, partition.getValue().metadata());
                         stmt.setObject(++p, partition.getValue().leaderEpoch().orElse(null), Types.BIGINT);
                         stmt.setTimestamp(++p, now);
@@ -746,6 +857,7 @@ public class DataSync {
     }
 
     record Cluster(
+            String name,
             int id,
             String kafkaId,
             Collection<Node> nodes,
@@ -753,8 +865,8 @@ public class DataSync {
             Map<Integer, Map<String, LogDirDescription>> logDirs,
             AtomicReference<QuorumInfo> quorum
     ) {
-        public Cluster(int id, String kafkaId, Collection<Node> nodes, int controllerId) {
-            this(id, kafkaId, nodes, controllerId, new HashMap<>(), new AtomicReference<>());
+        public Cluster(String name, int id, String kafkaId, Collection<Node> nodes, int controllerId) {
+            this(name, id, kafkaId, nodes, controllerId, new HashMap<>(), new AtomicReference<>());
         }
 
         private <T> T mapQuorum(Function<QuorumInfo, T> mapFn) {

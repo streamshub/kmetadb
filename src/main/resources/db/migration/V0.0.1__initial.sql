@@ -156,6 +156,7 @@ CREATE TABLE consumer_group_offsets
 , consumer_group_id  INT NOT NULL
 , topic_partition_id INT NOT NULL
 , "offset"           BIGINT NOT NULL
+, offset_timestamp   TIMESTAMP WITH TIME ZONE
 , metadata           VARCHAR
 , leader_epoch       BIGINT
 , discovered_at      TIMESTAMP WITH TIME ZONE NOT NULL

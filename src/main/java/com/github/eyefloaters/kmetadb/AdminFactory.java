@@ -2,6 +2,9 @@ package com.github.eyefloaters.kmetadb;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.Predicate;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import jakarta.enterprise.context.ApplicationScoped;
@@ -11,6 +14,9 @@ import jakarta.inject.Inject;
 
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
@@ -39,7 +45,9 @@ public class AdminFactory {
         return clusterNames.entrySet()
             .stream()
             .map(cluster -> {
-                var client = Admin.create(buildConfig(cluster.getKey()));
+                var adminConfig = buildConfig(AdminClientConfig.configNames(), cluster.getKey());
+                logConfig("Admin[" + cluster.getKey() + ']', adminConfig);
+                var client = Admin.create(adminConfig);
                 return Map.entry(cluster.getValue(), client);
             })
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
@@ -49,8 +57,29 @@ public class AdminFactory {
         admins.values().parallelStream().forEach(Admin::close);
     }
 
-    Map<String, Object> buildConfig(String clusterKey) {
-        return AdminClientConfig.configNames()
+    @Produces
+    Map<String, Consumer<byte[], byte[]>> getConsumers() {
+        return clusterNames.entrySet()
+            .stream()
+            .map(cluster -> {
+                Set<String> configNames = ConsumerConfig.configNames().stream()
+                        // Do not allow a group Id to be set for this application
+                        .filter(Predicate.not(ConsumerConfig.GROUP_ID_CONFIG::equals))
+                        .collect(Collectors.toSet());
+                var consumerConfig = buildConfig(configNames, cluster.getKey());
+                logConfig("Consumer[" + cluster.getKey() + ']', consumerConfig);
+                var client = new KafkaConsumer<byte[], byte[]>(consumerConfig);
+                return Map.entry(cluster.getValue(), client);
+            })
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
+
+    void closeConsumers(@Disposes Map<String, Consumer<byte[], byte[]>> consumers) {
+        consumers.values().parallelStream().forEach(Consumer::close);
+    }
+
+    Map<String, Object> buildConfig(Set<String> configNames, String clusterKey) {
+        return configNames
             .stream()
             .map(configName -> getClusterConfig(clusterKey, configName)
                     .or(() -> getDefaultConfig(clusterKey, configName))
@@ -63,14 +92,14 @@ public class AdminFactory {
     Optional<String> getClusterConfig(String clusterKey, String configName) {
         return config.getOptionalValue("kmetadb.kafka." + clusterKey + '.' + configName, String.class)
             .map(cfg -> {
-                log.debugf("OVERRIDE config %s for cluster %s", configName, clusterKey);
+                log.tracef("OVERRIDE config %s for cluster %s", configName, clusterKey);
                 return removeQuotes(cfg);
             });
     }
 
     Optional<String> getDefaultConfig(String clusterKey, String configName) {
         if (defaultClusterConfigs.containsKey(configName)) {
-            log.debugf("DEFAULT config %s for cluster %s", configName, clusterKey);
+            log.tracef("DEFAULT config %s for cluster %s", configName, clusterKey);
             String cfg = defaultClusterConfigs.get(configName).toString();
             return Optional.of(removeQuotes(cfg));
         }
@@ -79,6 +108,18 @@ public class AdminFactory {
     }
 
     String removeQuotes(String cfg) {
-        return cfg.replaceAll("(^[\"'])|([\"']$)", "");
+        return BOUNDARY_QUOTES.matcher(cfg).replaceAll("");
     }
+
+    void logConfig(String clientType, Map<String, Object> config) {
+        if (log.isDebugEnabled()) {
+            String msg = config.entrySet()
+                .stream()
+                .map(entry -> "\t%s = %s".formatted(entry.getKey(), entry.getValue()))
+                .collect(Collectors.joining("\n", "%s configuration:\n", ""));
+            log.debugf(msg, clientType);
+        }
+    }
+
+    private static final Pattern BOUNDARY_QUOTES = Pattern.compile("(^[\"'])|([\"']$)");
 }
