@@ -25,14 +25,23 @@ WHEN MATCHED
   THEN
     UPDATE
     SET refreshed_at = n.refreshed_at
+      , velocity = CASE t.offset_type
+        WHEN 'LATEST'
+          THEN 0
+        END
 
 WHEN MATCHED
   THEN
     UPDATE
-    SET refreshed_at = n.refreshed_at
-      , "offset"     = n."offset"
+    SET "offset"     = n."offset"
+      , velocity = CASE t.offset_type
+        WHEN 'LATEST'
+          THEN (n."offset" - t."offset") / extract(EPOCH FROM n.refreshed_at - t.modified_at)
+        END
       , "timestamp"  = n."timestamp"
       , leader_epoch = n.leader_epoch
+      , modified_at  = n.refreshed_at
+      , refreshed_at = n.refreshed_at
 
 WHEN NOT MATCHED
   THEN

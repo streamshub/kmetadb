@@ -68,6 +68,7 @@ CREATE TABLE partition_offsets
 , "offset"           BIGINT
 , "timestamp"        TIMESTAMP WITH TIME ZONE
 , leader_epoch       BIGINT
+, velocity           REAL
 , discovered_at      TIMESTAMP WITH TIME ZONE NOT NULL
 , modified_at        TIMESTAMP WITH TIME ZONE NOT NULL
 , refreshed_at       TIMESTAMP WITH TIME ZONE NOT NULL
@@ -159,6 +160,7 @@ CREATE TABLE consumer_group_offsets
 , offset_timestamp   TIMESTAMP WITH TIME ZONE
 , metadata           VARCHAR
 , leader_epoch       BIGINT
+, velocity           REAL
 , discovered_at      TIMESTAMP WITH TIME ZONE NOT NULL
 , modified_at        TIMESTAMP WITH TIME ZONE NOT NULL
 , refreshed_at       TIMESTAMP WITH TIME ZONE NOT NULL

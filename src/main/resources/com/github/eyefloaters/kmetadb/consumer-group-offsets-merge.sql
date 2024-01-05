@@ -30,11 +30,13 @@ WHEN MATCHED
   THEN
     UPDATE
     SET refreshed_at = n.refreshed_at
+      , velocity = 0
 
 WHEN MATCHED
   THEN
     UPDATE
     SET "offset"       = n."offset"
+      , velocity = (n."offset" - t."offset") / extract(EPOCH FROM n.refreshed_at - t.modified_at)
       , offset_timestamp = n.offset_timestamp
       , metadata   = n.metadata
       , leader_epoch    = n.leader_epoch

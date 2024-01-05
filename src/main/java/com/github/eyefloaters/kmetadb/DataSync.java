@@ -321,6 +321,8 @@ public class DataSync {
             .collect(awaitingAll())
             .join();
 
+        Timestamp offsetsRefreshedAt = Timestamp.from(Instant.now());
+
         try (var connection = dataSource.getConnection()) {
             try (var stmt = connection.prepareStatement(sql("partition-offsets-merge"))) {
                 Instant t0 = Instant.now();
@@ -343,7 +345,7 @@ public class DataSync {
                             stmt.setObject(++p, offsetValue);
                             stmt.setTimestamp(++p, timestamp);
                             stmt.setObject(++p, offset.getValue().leaderEpoch().orElse(null));
-                            stmt.setTimestamp(++p, now);
+                            stmt.setTimestamp(++p, offsetsRefreshedAt);
                             stmt.setInt(++p, cluster.id());
                             stmt.setString(++p, topic.getKey().toString());
                             stmt.setInt(++p, partition.getKey());

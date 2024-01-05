@@ -36,12 +36,13 @@ WHEN MATCHED
 WHEN MATCHED
   THEN
     UPDATE
-    SET refreshed_at = n.refreshed_at
-      , leader = n.leader
+    SET leader = n.leader
       , in_sync = n.in_sync
       , size = n.size
       , offset_lag = n.offset_lag
       , future = n.future
+      , modified_at  = n.refreshed_at
+      , refreshed_at = n.refreshed_at
 
 WHEN NOT MATCHED
   THEN
