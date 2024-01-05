@@ -14,6 +14,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -697,47 +698,58 @@ public class DataSync {
 
         int rounds = targets.values().stream().mapToInt(Collection::size).max().orElse(0);
 
-        Set<TopicPartition> assignments = targets.keySet();
+        Set<TopicPartition> assignments = new HashSet<>(targets.keySet());
+        Instant deadline = Instant.now().plusSeconds(10);
 
         for (int r = 0; r < rounds; r++) {
-            consumer.assign(assignments);
-
             int round = r;
+            int attempt = 0;
 
-            assignments.forEach(topicPartition ->
-                consumer.seek(topicPartition, targets.get(topicPartition).get(round).offset()));
+            while (!assignments.isEmpty() && Instant.now().isBefore(deadline)) {
+                consumer.assign(assignments);
 
-            var result = consumer.poll(Duration.ofSeconds(10));
-            log.debugf("Consumer polled %s record(s) in round %d", result.count(), round);
+                assignments.forEach(topicPartition ->
+                    consumer.seek(topicPartition, targets.get(topicPartition).get(round).offset()));
 
-            assignments.forEach(topicPartition -> {
-                var records = result.records(topicPartition);
+                var result = consumer.poll(Duration.between(Instant.now(), deadline));
+                log.debugf("Consumer polled %s record(s) in round %d, attempt %d", result.count(), round, ++attempt);
+                List<TopicPartition> missing = new ArrayList<>();
 
-                if (records.isEmpty()) {
-                    // format args cast to avoid ambiguous method reference
+                assignments.forEach(topicPartition -> {
+                    var records = result.records(topicPartition);
+
+                    if (records.isEmpty()) {
+                        missing.add(topicPartition);
+                    } else {
+                        var rec = records.get(0);
+                        Timestamp ts = Timestamp.from(Instant.ofEpochMilli(rec.timestamp()));
+                        targets.get(topicPartition).get(round).offsetTimestamp(ts);
+
+                        log.debugf("Timestamp of offset %d in topic-partition %s-%d is %s",
+                                rec.offset(),
+                                rec.topic(),
+                                rec.partition(),
+                                ts);
+                    }
+                });
+
+                assignments.retainAll(missing);
+            }
+
+            if (!assignments.isEmpty()) {
+                assignments.forEach(topicPartition ->
                     log.infof("No records returned for offset %d in topic-partition %s-%d",
-                            (Long) targets.get(topicPartition).get(round).offset(),
+                            targets.get(topicPartition).get(round).offset(),
                             topicPartition.topic(),
-                            (Integer) topicPartition.partition());
-                } else {
-                    var rec = records.get(0);
-                    Timestamp ts = Timestamp.from(Instant.ofEpochMilli(rec.timestamp()));
-                    targets.get(topicPartition).get(round).offsetTimestamp(ts);
-
-                    log.debugf("Timestamp of offset %d in topic-partition %s-%d is %s",
-                            rec.offset(),
-                            rec.topic(),
-                            rec.partition(),
-                            ts);
-                }
-            });
+                            topicPartition.partition()));
+            }
 
             // Setup next round's assignments
             assignments = targets.entrySet()
                 .stream()
                 .filter(e -> e.getValue().size() > round + 1)
                 .map(Map.Entry::getKey)
-                .collect(Collectors.toSet());
+                .collect(Collectors.toCollection(HashSet::new));
         }
 
         consumer.unsubscribe();
