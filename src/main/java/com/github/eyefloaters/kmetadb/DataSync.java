@@ -12,8 +12,6 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
@@ -32,7 +30,9 @@ import org.apache.kafka.clients.admin.ReplicaInfo;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
+import org.eclipse.microprofile.context.ManagedExecutor;
 import org.jboss.logging.Logger;
+import org.jboss.logging.MDC;
 
 import com.github.eyefloaters.kmetadb.model.Cluster;
 
@@ -51,7 +51,8 @@ public class DataSync {
     @Inject
     UserTransaction transaction;
 
-    ExecutorService exec = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("metasync-", 1).factory());
+    @Inject
+    ManagedExecutor exec;
 
     AtomicBoolean running = new AtomicBoolean(true);
 
@@ -63,60 +64,86 @@ public class DataSync {
 
     void stop(@Observes Shutdown shutdownEvent /* NOSONAR */) {
         running.set(false);
-        exec.shutdown();
     }
 
     void metadataLoop(String clusterName) {
-        while (running.get()) {
-            try {
-                transaction.begin();
-                refreshMetadata(clusterName);
-                transaction.commit();
-            } catch (Exception e) {
-                log.errorf(e, "Failed to refresh Kafka metadata");
+        MDC.put("cluster.name", clusterName);
 
-                try {
-                    transaction.rollback();
-                } catch (IllegalStateException | SecurityException | SystemException e1) {
-                    log.errorf(e1, "Failed to rollback transaction");
-                }
+        while (running.get()) {
+            Instant deadline = Instant.now().plusSeconds(30);
+
+            try {
+                refreshMetadata(clusterName, deadline);
+            } catch (Exception e) {
+                log.errorf(e, "Failed to refresh Kafka cluster metadata");
             }
 
-            LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(10));
+            if (running.get()) {
+                long remaining = deadline.getEpochSecond() - Instant.now().getEpochSecond();
+
+                if (remaining > 0) {
+                    LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(remaining));
+                }
+            }
         }
+
+        log.infof("Exited run-loop for cluster %s", clusterName);
     }
 
-    void refreshMetadata(String clusterName) {
+    void refreshMetadata(String clusterName, Instant deadline) {
         final Instant begin = Instant.now();
         final Timestamp now = Timestamp.from(begin);
 
         Cluster cluster = scraper.scrape(clusterName);
 
-        refreshCluster(now, cluster);
-        refreshNodes(now, cluster);
-        refreshTopics(now, cluster);
-        refreshTopicPartitions(now, cluster);
-        refreshConsumerGroups(now, cluster);
+        try {
+            transaction.begin();
+            refreshCluster(now, cluster);
+            refreshNodes(now, cluster);
+            refreshTopics(now, cluster);
+            refreshTopicPartitions(now, cluster);
+            refreshConsumerGroups(now, cluster);
+            transaction.commit();
+        } catch (Exception e) {
+            logException(e, "Kafka cluster metadata");
+            return;
+        }
 
         if (log.isDebugEnabled()) {
-            log.debugf("Refreshed cluster %s metadata in %s\n%s",
-                    cluster.kafkaId(),
+            log.debugf("refreshed cluster metadata in %s\n%s",
                     Duration.between(begin, Instant.now()),
                     cluster.report());
         }
 
-        refreshConsumerGroupOffsets(cluster);
-        refreshTopicOffsets(cluster);
+        while (Instant.now().isBefore(deadline)) {
+            final Instant throttle = Instant.now().plusSeconds(2);
+
+            try {
+                transaction.begin();
+                refreshConsumerGroupOffsets(cluster);
+                refreshTopicOffsets(cluster);
+                transaction.commit();
+            } catch (Exception e) {
+                logException(e, "Kafka offset metadata");
+                return;
+            }
+
+            long remaining = throttle.getEpochSecond() - Instant.now().getEpochSecond();
+
+            if (remaining > 0) {
+                LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(remaining));
+            }
+        }
     }
 
     void refreshCluster(Timestamp now, Cluster cluster) {
         try (var connection = dataSource.getConnection()) {
             try (var stmt = connection.prepareStatement(sql("clusters-merge"))) {
+                Instant t0 = Instant.now();
                 stmt.setString(1, cluster.kafkaId());
                 stmt.setString(2, cluster.name());
                 stmt.setTimestamp(3, now);
-                stmt.executeUpdate();
-                log.debugf("Added/updated cluster %s", cluster.kafkaId());
+                logRefresh("clusters", t0, new int[] { stmt.executeUpdate() });
             }
 
             try (var stmt = connection.prepareStatement("SELECT id FROM clusters WHERE kafka_id = ?")) {
@@ -186,7 +213,7 @@ public class DataSync {
 
                 try (var results = stmt.executeQuery()) {
                     while (results.next()) {
-                        log.infof("Deleted topic: %s", results.getString(2));
+                        log.infof("deleted topic: %s", results.getString(2));
                         results.deleteRow();
                     }
                 }
@@ -300,6 +327,11 @@ public class DataSync {
             reportSQLException(e1, "Failed to insert to `consumer_groups` table");
         }
 
+        refreshConsumerGroupMembers(now, cluster);
+        refreshConsumerGroupAssignments(now, cluster);
+    }
+
+    void refreshConsumerGroupMembers(Timestamp now, Cluster cluster) {
         try (var connection = dataSource.getConnection()) {
             try (var stmt = connection.prepareStatement(sql("consumer-group-members-merge"))) {
                 Instant t0 = Instant.now();
@@ -340,7 +372,9 @@ public class DataSync {
         } catch (SQLException e1) {
             reportSQLException(e1, "Failed to insert to `consumer_group_members` table");
         }
+    }
 
+    void refreshConsumerGroupAssignments(Timestamp now, Cluster cluster) {
         try (var connection = dataSource.getConnection()) {
             try (var stmt = connection.prepareStatement(sql("consumer-group-member-assignments-merge"))) {
                 Instant t0 = Instant.now();
@@ -483,26 +517,51 @@ public class DataSync {
                 .filter(count -> count > 1)
                 .toArray();
 
-            log.warnf("Refreshed %d %s records, but expected to refresh %d (duration %s)",
+            log.warnf("refreshed %d %s records, but expected to refresh %d (duration %s)",
                     total,
                     table,
                     actualCounts.length,
                     Duration.between(begin, Instant.now()));
 
             if (multiUpdates.length > 0) {
-                log.warnf("Batch entry updated more than 1 row in table %s in %d batch entries", table, multiUpdates.length);
+                log.warnf("batch entry updated more than 1 row in table %s in %d batch entries",
+                        table,
+                        multiUpdates.length);
             }
         } else {
-            log.debugf("Refreshed %d %s records in %s", total, table, Duration.between(begin, Instant.now()));
+            log.debugf("refreshed %d %s records in %s",
+                    total,
+                    table,
+                    Duration.between(begin, Instant.now()));
+        }
+    }
+
+    void logException(Exception thrown, String content) {
+        if (running.get()) {
+            log.errorf(thrown, "failed to refresh %s", content);
+
+            try {
+                transaction.rollback();
+            } catch (IllegalStateException | SecurityException | SystemException rollbackThrown) {
+                log.error("failed to rollback transaction", rollbackThrown);
+            }
+        } else {
+            log.warn("shutting down mid-transaction, nothing committed");
+            try {
+                transaction.rollback();
+            } catch (Exception rollbackThrown) {
+                // Ignore
+            }
         }
     }
 
     void reportSQLException(SQLException sql, String message) {
-        log.errorf(sql, message);
+        log.error(message, sql);
         var next = sql.getNextException();
+        int n = 0;
 
         while (next != null) {
-            log.errorf(next, message);
+            log.errorf(next, "(next %d): %s", ++n, message);
             next = next.getNextException();
         }
     }

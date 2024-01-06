@@ -48,13 +48,19 @@ public class AdminFactory {
                 var adminConfig = buildConfig(AdminClientConfig.configNames(), cluster.getKey());
                 logConfig("Admin[" + cluster.getKey() + ']', adminConfig);
                 var client = Admin.create(adminConfig);
-                return Map.entry(cluster.getValue(), client);
+                return Map.entry(unquote(cluster.getValue()), client);
             })
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     void closeAdmins(@Disposes Map<String, Admin> admins) {
-        admins.values().parallelStream().forEach(Admin::close);
+        admins.values().parallelStream().forEach(admin -> {
+            try {
+                admin.close();
+            } catch (Exception e) {
+                log.warnf("Exception occurred closing admin: %s", e.getMessage());
+            }
+        });
     }
 
     @Produces
@@ -69,13 +75,19 @@ public class AdminFactory {
                 var consumerConfig = buildConfig(configNames, cluster.getKey());
                 logConfig("Consumer[" + cluster.getKey() + ']', consumerConfig);
                 var client = new KafkaConsumer<byte[], byte[]>(consumerConfig);
-                return Map.entry(cluster.getValue(), client);
+                return Map.entry(unquote(cluster.getValue()), client);
             })
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     void closeConsumers(@Disposes Map<String, Consumer<byte[], byte[]>> consumers) {
-        consumers.values().parallelStream().forEach(Consumer::close);
+        consumers.values().parallelStream().forEach(consumer -> {
+            try {
+                consumer.close();
+            } catch (Exception e) {
+                log.warnf("Exception occurred closing consumer: %s", e.getMessage());
+            }
+        });
     }
 
     Map<String, Object> buildConfig(Set<String> configNames, String clusterKey) {
@@ -93,7 +105,7 @@ public class AdminFactory {
         return config.getOptionalValue("kmetadb.kafka." + clusterKey + '.' + configName, String.class)
             .map(cfg -> {
                 log.tracef("OVERRIDE config %s for cluster %s", configName, clusterKey);
-                return removeQuotes(cfg);
+                return unquote(cfg);
             });
     }
 
@@ -101,13 +113,13 @@ public class AdminFactory {
         if (defaultClusterConfigs.containsKey(configName)) {
             log.tracef("DEFAULT config %s for cluster %s", configName, clusterKey);
             String cfg = defaultClusterConfigs.get(configName).toString();
-            return Optional.of(removeQuotes(cfg));
+            return Optional.of(unquote(cfg));
         }
 
         return Optional.empty();
     }
 
-    String removeQuotes(String cfg) {
+    String unquote(String cfg) {
         return BOUNDARY_QUOTES.matcher(cfg).replaceAll("");
     }
 

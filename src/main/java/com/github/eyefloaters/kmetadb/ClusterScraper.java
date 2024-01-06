@@ -13,6 +13,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collector;
 import java.util.stream.Collectors;
@@ -22,8 +23,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
 import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConsumerGroupListing;
 import org.apache.kafka.clients.admin.DescribeClusterResult;
+import org.apache.kafka.clients.admin.DescribeConfigsOptions;
 import org.apache.kafka.clients.admin.DescribeMetadataQuorumResult;
 import org.apache.kafka.clients.admin.DescribeTopicsOptions;
 import org.apache.kafka.clients.admin.ListConsumerGroupOffsetsSpec;
@@ -38,8 +41,10 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicCollection;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.jboss.logging.Logger;
+import org.jboss.logging.MDC;
 
 import com.github.eyefloaters.kmetadb.model.Cluster;
 import com.github.eyefloaters.kmetadb.model.OffsetMetadataAndTimestamp;
@@ -64,11 +69,15 @@ public class ClusterScraper {
 
     @PostConstruct
     void startup() {
-        adminClients.values().forEach(adminClient -> {
+        adminClients.forEach((clusterName, adminClient) -> {
             adminClient.describeCluster()
                 .clusterId()
                 .toCompletionStage()
-                .thenAcceptAsync(clusterId -> log.infof("Connected to cluster: %s", clusterId));
+                .thenAccept(clusterId -> {
+                    MDC.put("cluster.id", clusterId);
+                    MDC.put("cluster.name", clusterName);
+                    log.info("connected");
+                });
         });
     }
 
@@ -81,15 +90,21 @@ public class ClusterScraper {
         var clusterResult = adminClient.describeCluster();
         var quorumResult = adminClient.describeMetadataQuorum();
 
-        return KafkaFuture.allOf(clusterResult.clusterId(), clusterResult.nodes(), clusterResult.controller())
-            .toCompletionStage()
-            .thenApply(nothing -> newCluster(clusterName, clusterResult))
-            //.thenCompose(c -> addClusterConfigs(adminClient, c))
+        Cluster cluster = KafkaFuture.allOf(clusterResult.clusterId(), clusterResult.nodes(), clusterResult.controller())
+                .toCompletionStage()
+                .thenApply(nothing -> newCluster(clusterName, clusterResult))
+                .toCompletableFuture()
+                .join();
+
+        MDC.put("cluster.id", cluster.kafkaId());
+
+        return CompletableFuture.completedStage(cluster)
+            .thenCompose(c -> addNodeConfigs(adminClient, c))
             .thenCompose(c -> addLogDirs(adminClient, c))
             .thenCompose(c -> addQuorumInfo(quorumResult, c))
             .thenCompose(c -> addTopicListings(adminClient, c))
             .thenCompose(c -> addTopicDescriptions(adminClient, c))
-            //.thenCompose(c -> addTopicConfigs(adminClient, c))
+            .thenCompose(c -> addTopicConfigs(adminClient, c))
             .thenCompose(c -> addConsumerGroups(adminClient, c))
             .toCompletableFuture()
             .join();
@@ -111,9 +126,8 @@ public class ClusterScraper {
                     .toCompletionStage()
                     .thenApply(offsets -> groupOffsets.put(group, offsets))
                     .exceptionally(error -> {
-                        log.warnf("Exception listing group offsets for group %s in cluster %s: %s",
+                        log.warnf("exception listing group offsets for group %s: %s",
                                 group,
-                                cluster.id(),
                                 error.getMessage());
                         return null;
                     }))
@@ -158,7 +172,10 @@ public class ClusterScraper {
                     consumer.seek(topicPartition, targets.get(topicPartition).get(round).offset()));
 
                 var result = consumer.poll(Duration.between(Instant.now(), deadline));
-                log.debugf("Consumer polled %s record(s) in round %d, attempt %d", result.count(), round, ++attempt);
+                log.debugf("consumer polled %s record(s) in round %d, attempt %d",
+                        result.count(),
+                        round,
+                        ++attempt);
                 List<TopicPartition> missing = new ArrayList<>();
 
                 assignments.forEach(topicPartition -> {
@@ -171,7 +188,7 @@ public class ClusterScraper {
                         Instant ts = Instant.ofEpochMilli(rec.timestamp());
                         targets.get(topicPartition).get(round).offsetTimestamp(ts);
 
-                        log.debugf("Timestamp of offset %d in topic-partition %s-%d is %s",
+                        log.debugf("timestamp of offset %d in topic-partition %s-%d is %s",
                                 rec.offset(),
                                 rec.topic(),
                                 rec.partition(),
@@ -184,7 +201,7 @@ public class ClusterScraper {
 
             if (!assignments.isEmpty()) {
                 assignments.forEach(topicPartition ->
-                    log.infof("No records returned for offset %d in topic-partition %s-%d",
+                    log.infof("no records returned for offset %d in topic-partition %s-%d",
                             targets.get(topicPartition).get(round).offset(),
                             topicPartition.topic(),
                             topicPartition.partition()));
@@ -253,11 +270,10 @@ public class ClusterScraper {
                                     .computeIfAbsent(partition.partition(), k -> new HashMap<>())
                                     .put(spec.getKey(), offset))
                             .exceptionally(error -> {
-                                log.warnf("Exception fetching %s topic offsets %s{name=%s} in cluster %s: %s",
+                                log.warnf("exception fetching %s topic offsets %s{name=%s}: %s",
                                         spec.getKey(),
                                         topicNames.get(partition.topic()),
                                         partition.topic(),
-                                        cluster.id(),
                                         error.getMessage());
                                 return null;
                             }));
@@ -287,7 +303,8 @@ public class ClusterScraper {
                     .toCompletionStage()
                     .thenAccept(logDirs -> cluster.logDirs().put(entry.getKey(), logDirs))
                     .exceptionally(error -> {
-                        log.warnf("Exception fetching log dirs for node: %d", entry.getKey());
+                        log.warnf("exception fetching log dirs for node: %d",
+                                entry.getKey());
                         return null;
                     }))
             .map(CompletionStage::toCompletableFuture)
@@ -296,13 +313,14 @@ public class ClusterScraper {
     }
 
     CompletionStage<Cluster> addQuorumInfo(DescribeMetadataQuorumResult quorumResult, Cluster cluster) {
-        return quorumResult.quorumInfo().toCompletionStage()
+        return quorumResult.quorumInfo()
+            .toCompletionStage()
             .thenAccept(cluster::quorum)
             .exceptionally(error -> {
                 if (error.getCause() instanceof UnsupportedVersionException) {
-                    log.debugf("Describing metadata quorum not supported by broker");
+                    log.debugf("describing metadata quorum not supported by broker %s", cluster.name());
                 } else {
-                    log.warnf("Exception describing metadata quorum: %s", error.getMessage());
+                    log.warnf("exception describing metadata quorum: %s", error.getMessage());
                 }
                 return null;
             })
@@ -318,6 +336,71 @@ public class ClusterScraper {
             .thenApply(nothing -> cluster);
     }
 
+    CompletionStage<Cluster> addNodeConfigs(Admin adminClient, Cluster cluster) {
+        var nodeResources = cluster.nodes()
+                .stream()
+                .map(node -> Map.entry(
+                        new ConfigResource(ConfigResource.Type.BROKER, node.idString()),
+                        node.id()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        return scrapeConfigs(
+                adminClient,
+                nodeResources.keySet(),
+                (resource, config) -> cluster.nodeConfigs().put(nodeResources.get(resource), config),
+                (resource, error) -> {
+                    Integer nodeId = nodeResources.get(resource);
+                    log.warnf("exception describing node config %d: %s", nodeId, error.getMessage());
+                })
+            .thenApply(nothing -> cluster);
+    }
+
+    CompletionStage<Cluster> addTopicConfigs(Admin adminClient, Cluster cluster) {
+        var topicResources = cluster.topicListings()
+                .values()
+                .stream()
+                .map(listing -> Map.entry(
+                        new ConfigResource(ConfigResource.Type.TOPIC, listing.name()),
+                        listing.topicId()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        return scrapeConfigs(
+                adminClient,
+                topicResources.keySet(),
+                (resource, config) -> cluster.topicConfigs().put(topicResources.get(resource), config),
+                (resource, error) -> {
+                    var topicId = topicResources.get(resource);
+                    log.warnf("exception describing topic config %s{name=%s}: %s",
+                            topicId,
+                            cluster.topicListings().get(topicId).name(),
+                            error.getMessage());
+                })
+            .thenApply(nothing -> cluster);
+    }
+
+    CompletionStage<Void> scrapeConfigs(
+            Admin adminClient,
+            Collection<ConfigResource> resources,
+            BiConsumer<ConfigResource, Config> configConsumer,
+            BiConsumer<ConfigResource, Throwable> errorConsumer) {
+
+        return adminClient.describeConfigs(resources, new DescribeConfigsOptions()
+                .includeDocumentation(true))
+            .values()
+            .entrySet()
+            .stream()
+            .map(pending -> pending
+                    .getValue()
+                    .toCompletionStage()
+                    .thenAccept(config -> configConsumer.accept(pending.getKey(), config))
+                    .exceptionally(error -> {
+                        errorConsumer.accept(pending.getKey(), error);
+                        return null;
+                    }))
+            .map(CompletionStage::toCompletableFuture)
+            .collect(awaitingAll());
+    }
+
     CompletionStage<Cluster> addTopicDescriptions(Admin adminClient, Cluster cluster) {
         return adminClient.describeTopics(
                 TopicCollection.ofTopicIds(cluster.topicListings().keySet()),
@@ -331,10 +414,9 @@ public class ClusterScraper {
                     .toCompletionStage()
                     .thenAccept(cluster.topicDescriptions()::add)
                     .exceptionally(error -> {
-                        log.warnf("Exception describing topic %s{name=%s} in cluster %s: %s",
+                        log.warnf("exception describing topic %s{name=%s}: %s",
                                 pending.getKey(),
                                 cluster.topicListings().get(pending.getKey()).name(),
-                                cluster.id(),
                                 error.getMessage());
                         return null;
                     }))
@@ -350,7 +432,7 @@ public class ClusterScraper {
             .toCompletionStage()
             .thenAccept(errors ->
                 errors.forEach(error ->
-                    log.warnf("Exception listing consumer group: %s", error.getMessage())))
+                    log.warnf("exception listing consumer group: %s", error.getMessage())))
             .thenCompose(nothing ->
                 listGroupsResult.valid()
                     .toCompletionStage()

@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 
+import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.LogDirDescription;
 import org.apache.kafka.clients.admin.QuorumInfo;
@@ -24,8 +25,10 @@ public class Cluster {
     final Collection<Node> nodes;
     final int controllerId;
 
+    final Map<Integer, Config> nodeConfigs = new HashMap<>();
     final Map<Integer, Map<String, LogDirDescription>> logDirs = new HashMap<>();
     final Map<Uuid, TopicListing> topicListings = new HashMap<>();
+    final Map<Uuid, Config> topicConfigs = new HashMap<>();
     final List<TopicDescription> topicDescriptions = new ArrayList<>();
     final Map<String, ConsumerGroupDescription> consumerGroups = new HashMap<>();
 
@@ -59,6 +62,10 @@ public class Cluster {
         return nodes;
     }
 
+    public Map<Integer, Config> nodeConfigs() {
+        return nodeConfigs;
+    }
+
     public int controllerId() {
         return controllerId;
     }
@@ -69,6 +76,10 @@ public class Cluster {
 
     public Map<Uuid, TopicListing> topicListings() {
         return topicListings;
+    }
+
+    public Map<Uuid, Config> topicConfigs() {
+        return topicConfigs;
     }
 
     public List<TopicDescription> topicDescriptions() {
@@ -103,7 +114,9 @@ public class Cluster {
         Map<String, Long> counts = new LinkedHashMap<>();
 
         counts.put("Nodes", Long.valueOf(nodes.size()));
+        counts.put("Node Configs", nodeConfigs.values().stream().mapToLong(c -> c.entries().size()).sum());
         counts.put("Topics", Long.valueOf(topicListings.size()));
+        counts.put("Topic Configs", topicConfigs.values().stream().mapToLong(c -> c.entries().size()).sum());
 
         var partitions = topicDescriptions.stream().flatMap(d -> d.partitions().stream()).toList();
         counts.put("Partitions", Long.valueOf(partitions.size()));
@@ -111,7 +124,7 @@ public class Cluster {
 
         counts.put("Consumer Groups", Long.valueOf(consumerGroups.size()));
         counts.put("Consumer Group Members", consumerGroups.values().stream().mapToLong(g -> g.members().size()).sum());
-        counts.put("Consumer Group Member Assignments", consumerGroups.values().stream()
+        counts.put("Consumer Group Assignments", consumerGroups.values().stream()
                 .flatMap(g -> g.members().stream()).mapToLong(m -> m.assignment().topicPartitions().size()).sum());
 
         int labelWidth = counts.keySet().stream().map(String::length).max(Integer::compare).orElse(30);
