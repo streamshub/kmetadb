@@ -38,7 +38,7 @@ import org.jboss.logging.Logger;
 import io.smallrye.common.annotation.Identifier;
 
 @ApplicationScoped
-public class AdminFactory {
+public class ClientFactory {
 
     @Inject
     Logger log;
