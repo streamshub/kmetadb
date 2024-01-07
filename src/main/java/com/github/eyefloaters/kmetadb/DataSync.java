@@ -124,7 +124,7 @@ public class DataSync {
                 refreshTopicOffsets(cluster);
                 transaction.commit();
             } catch (Exception e) {
-                logException(e, "Kafka offset metadata");
+                logException(e, "Kafka offsets");
                 return;
             }
 
@@ -185,6 +185,33 @@ public class DataSync {
         } catch (SQLException e1) {
             reportSQLException(e1, "Failed to refresh `nodes` table");
         }
+
+        try (var connection = dataSource.getConnection()) {
+            try (var stmt = connection.prepareStatement(sql("node-configs-merge"))) {
+                Instant t0 = Instant.now();
+
+                for (var node : cluster.nodes()) {
+                    for (var config : cluster.nodeConfigs().get(node.id()).entries()) {
+                        int p = 0;
+                        stmt.setString(++p, config.name());
+                        stmt.setString(++p, config.value());
+                        stmt.setString(++p, config.source().name());
+                        stmt.setBoolean(++p, config.isSensitive());
+                        stmt.setBoolean(++p, config.isReadOnly());
+                        stmt.setString(++p, config.type().name());
+                        stmt.setString(++p, config.documentation());
+                        stmt.setTimestamp(++p, now);
+                        stmt.setInt(++p, cluster.id());
+                        stmt.setInt(++p, node.id());
+                        stmt.addBatch();
+                    }
+                }
+
+                logRefresh("node_configs", t0, stmt.executeBatch());
+            }
+        } catch (SQLException e1) {
+            reportSQLException(e1, "Failed to refresh `node_configs` table");
+        }
     }
 
     void refreshTopics(Timestamp now, Cluster cluster) {
@@ -220,6 +247,33 @@ public class DataSync {
             }
         } catch (SQLException e1) {
             reportSQLException(e1, "Failed to insert to `topics` table");
+        }
+
+        try (var connection = dataSource.getConnection()) {
+            try (var stmt = connection.prepareStatement(sql("topic-configs-merge"))) {
+                Instant t0 = Instant.now();
+
+                for (var topic : cluster.topicListings().values()) {
+                    for (var config : cluster.topicConfigs().get(topic.topicId()).entries()) {
+                        int p = 0;
+                        stmt.setString(++p, config.name());
+                        stmt.setString(++p, config.value());
+                        stmt.setString(++p, config.source().name());
+                        stmt.setBoolean(++p, config.isSensitive());
+                        stmt.setBoolean(++p, config.isReadOnly());
+                        stmt.setString(++p, config.type().name());
+                        stmt.setString(++p, config.documentation());
+                        stmt.setTimestamp(++p, now);
+                        stmt.setInt(++p, cluster.id());
+                        stmt.setString(++p, topic.topicId().toString());
+                        stmt.addBatch();
+                    }
+                }
+
+                logRefresh("nodes", t0, stmt.executeBatch());
+            }
+        } catch (SQLException e1) {
+            reportSQLException(e1, "Failed to refresh `node_configs` table");
         }
     }
 
@@ -415,8 +469,8 @@ public class DataSync {
     }
 
     void refreshConsumerGroupOffsets(Cluster cluster) {
-        Timestamp offsetsRefreshedAt = Timestamp.from(Instant.now());
         var groupOffsets = scraper.scrapeGroupOffsets(cluster);
+        Timestamp offsetsRefreshedAt = Timestamp.from(Instant.now());
 
         try (var connection = dataSource.getConnection()) {
             try (var stmt = connection.prepareStatement(sql("consumer-group-offsets-merge"))) {

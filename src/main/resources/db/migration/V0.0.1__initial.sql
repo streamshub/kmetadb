@@ -30,6 +30,27 @@ CREATE TABLE nodes
 , CONSTRAINT kafka_node_id UNIQUE(cluster_id, kafka_id)
 );
 
+CREATE TABLE node_configs
+( id             INT NOT NULL GENERATED ALWAYS AS IDENTITY
+, cluster_id     INT NOT NULL
+, node_id        INT NOT NULL
+, name           VARCHAR NOT NULL
+, "value"        VARCHAR
+, source         VARCHAR NOT NULL
+, sensitive      BOOLEAN NOT NULL
+, read_only      BOOLEAN NOT NULL
+, "type"         VARCHAR NOT NULL
+, documentation  VARCHAR
+, discovered_at  TIMESTAMP WITH TIME ZONE NOT NULL
+, modified_at    TIMESTAMP WITH TIME ZONE NOT NULL
+, refreshed_at   TIMESTAMP WITH TIME ZONE NOT NULL
+-- Constraints
+, PRIMARY KEY(id)
+, CONSTRAINT fk_node_config_cluster FOREIGN KEY(cluster_id) REFERENCES clusters(id) ON DELETE CASCADE
+, CONSTRAINT fk_node_config_node FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+, CONSTRAINT kafka_node_config_id UNIQUE(cluster_id, node_id, name)
+);
+
 CREATE TABLE topics
 ( id            INT NOT NULL GENERATED ALWAYS AS IDENTITY
 , cluster_id    INT NOT NULL
@@ -98,6 +119,27 @@ CREATE TABLE partition_replicas
 , CONSTRAINT fk_partition_replica_topic_partition FOREIGN KEY(topic_partition_id) REFERENCES topic_partitions(id) ON DELETE CASCADE
 , CONSTRAINT fk_partition_replica_node FOREIGN KEY(node_id) REFERENCES nodes(id)
 , CONSTRAINT kafka_partition_replica_id UNIQUE(cluster_id, topic_partition_id, node_id)
+);
+
+CREATE TABLE topic_configs
+( id             INT NOT NULL GENERATED ALWAYS AS IDENTITY
+, cluster_id     INT NOT NULL
+, topic_id       INT NOT NULL
+, name           VARCHAR NOT NULL
+, "value"        VARCHAR
+, source         VARCHAR NOT NULL
+, sensitive      BOOLEAN NOT NULL
+, read_only      BOOLEAN NOT NULL
+, "type"         VARCHAR NOT NULL
+, documentation  VARCHAR
+, discovered_at  TIMESTAMP WITH TIME ZONE NOT NULL
+, modified_at    TIMESTAMP WITH TIME ZONE NOT NULL
+, refreshed_at   TIMESTAMP WITH TIME ZONE NOT NULL
+-- Constraints
+, PRIMARY KEY(id)
+, CONSTRAINT fk_topic_config_cluster FOREIGN KEY(cluster_id) REFERENCES clusters(id) ON DELETE CASCADE
+, CONSTRAINT fk_topic_config_topic FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
+, CONSTRAINT kafka_topic_config_id UNIQUE(cluster_id, topic_id, name)
 );
 
 CREATE TABLE consumer_groups
