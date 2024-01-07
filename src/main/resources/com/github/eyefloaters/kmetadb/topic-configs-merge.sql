@@ -11,7 +11,7 @@ USING ( SELECT topics.cluster_id AS cluster_id
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
         FROM   topics
         WHERE  topics.cluster_id = ?
-        AND    topics.kafka_id = ?
+        AND    topics.k_topic_id = ?
              ) AS n
 ON  t.cluster_id        = n.cluster_id
 AND t.topic_id          = n.topic_id

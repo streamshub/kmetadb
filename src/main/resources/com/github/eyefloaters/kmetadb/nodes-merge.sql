@@ -1,6 +1,6 @@
 MERGE INTO nodes AS t
 USING ( SELECT ? AS cluster_id
-             , ? AS kafka_id
+             , ? AS k_node_id
              , ? AS host
              , ? AS port
              , ? AS rack
@@ -11,7 +11,7 @@ USING ( SELECT ? AS cluster_id
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
              ) AS n
 ON  t.cluster_id     = n.cluster_id
-AND t.kafka_id       = n.kafka_id
+AND t.k_node_id      = n.k_node_id
 
 WHEN MATCHED
     AND t.host        IS NOT DISTINCT FROM n.host
@@ -41,7 +41,7 @@ WHEN MATCHED
 WHEN NOT MATCHED
   THEN
     INSERT ( cluster_id
-           , kafka_id
+           , k_node_id
            , host
            , port
            , rack
@@ -54,7 +54,7 @@ WHEN NOT MATCHED
            , refreshed_at
            )
     VALUES ( n.cluster_id
-           , n.kafka_id
+           , n.k_node_id
            , n.host
            , n.port
            , n.rack

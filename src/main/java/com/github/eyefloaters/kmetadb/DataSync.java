@@ -146,7 +146,7 @@ public class DataSync {
                 logRefresh("clusters", t0, new int[] { stmt.executeUpdate() });
             }
 
-            try (var stmt = connection.prepareStatement("SELECT id FROM clusters WHERE kafka_id = ?")) {
+            try (var stmt = connection.prepareStatement("SELECT id FROM clusters WHERE k_cluster_id = ?")) {
                 stmt.setString(1, cluster.kafkaId());
 
                 try (var result = stmt.executeQuery()) {

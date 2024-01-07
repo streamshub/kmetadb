@@ -7,16 +7,16 @@ USING ( SELECT cg.cluster_id AS cluster_id
              , ? AS metadata
              , ? AS leader_epoch
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
-        FROM   consumer_groups  cg
-        JOIN   topics           t
-        ON     t.cluster_id   = cg.cluster_id
-        JOIN   topic_partitions tp
-        ON     tp.cluster_id  = t.cluster_id
-        AND    tp.topic_id    = t.id
-        WHERE  cg.cluster_id  = ?
-        AND    cg.group_id    = ?
-        AND    t.name         = ?
-        AND    tp.kafka_id    = ?
+        FROM   consumer_groups     cg
+        JOIN   topics              t
+        ON     t.cluster_id      = cg.cluster_id
+        JOIN   topic_partitions    tp
+        ON     tp.cluster_id     = t.cluster_id
+        AND    tp.topic_id       = t.id
+        WHERE  cg.cluster_id     = ?
+        AND    cg.group_id       = ?
+        AND    t.name            = ?
+        AND    tp.k_partition_id = ?
              ) AS n
 ON  t.cluster_id         = n.cluster_id
 AND t.consumer_group_id  = n.consumer_group_id

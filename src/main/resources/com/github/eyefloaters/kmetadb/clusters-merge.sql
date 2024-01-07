@@ -1,9 +1,9 @@
 MERGE INTO clusters AS t
-USING ( SELECT ? AS kafka_id
+USING ( SELECT ? AS k_cluster_id
              , ? AS name
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
              ) AS n
-ON t.kafka_id = n.kafka_id
+ON t.k_cluster_id = n.k_cluster_id
 
 WHEN MATCHED
     AND t.name       = n.name
@@ -20,13 +20,13 @@ WHEN MATCHED
 
 WHEN NOT MATCHED
   THEN
-    INSERT ( kafka_id
+    INSERT ( k_cluster_id
            , name
            , discovered_at
            , modified_at
            , refreshed_at
            )
-    VALUES ( n.kafka_id
+    VALUES ( n.k_cluster_id
            , n.name
            , n.refreshed_at
            , n.refreshed_at

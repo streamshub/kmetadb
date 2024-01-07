@@ -1,19 +1,19 @@
 CREATE TABLE clusters
 ( id            INT NOT NULL GENERATED ALWAYS AS IDENTITY
-, kafka_id      VARCHAR NOT NULL
+, k_cluster_id  VARCHAR NOT NULL
 , name          VARCHAR NOT NULL
 , discovered_at TIMESTAMP WITH TIME ZONE NOT NULL
 , modified_at   TIMESTAMP WITH TIME ZONE NOT NULL
 , refreshed_at  TIMESTAMP WITH TIME ZONE NOT NULL
 -- Constraints
 , PRIMARY KEY (id)
-, CONSTRAINT kafka_cluster_id UNIQUE(kafka_id)
+, CONSTRAINT kafka_cluster_id UNIQUE(k_cluster_id)
 );
 
 CREATE TABLE nodes
 ( id            INT NOT NULL GENERATED ALWAYS AS IDENTITY
 , cluster_id    INT NOT NULL
-, kafka_id      INT NOT NULL
+, k_node_id     INT NOT NULL
 , host          VARCHAR
 , port          INT
 , rack          VARCHAR
@@ -27,7 +27,7 @@ CREATE TABLE nodes
 -- Constraints
 , PRIMARY KEY(id)
 , CONSTRAINT fk_node_cluster FOREIGN KEY(cluster_id) REFERENCES clusters(id) ON DELETE CASCADE
-, CONSTRAINT kafka_node_id UNIQUE(cluster_id, kafka_id)
+, CONSTRAINT kafka_node_id UNIQUE(cluster_id, k_node_id)
 );
 
 CREATE TABLE node_configs
@@ -54,7 +54,7 @@ CREATE TABLE node_configs
 CREATE TABLE topics
 ( id            INT NOT NULL GENERATED ALWAYS AS IDENTITY
 , cluster_id    INT NOT NULL
-, kafka_id      VARCHAR NOT NULL
+, k_topic_id    VARCHAR NOT NULL
 , name          VARCHAR NOT NULL
 , internal      BOOLEAN NOT NULL
 , discovered_at TIMESTAMP WITH TIME ZONE NOT NULL
@@ -63,14 +63,14 @@ CREATE TABLE topics
 -- Constraints
 , PRIMARY KEY(id)
 , CONSTRAINT fk_topic_cluster FOREIGN KEY(cluster_id) REFERENCES clusters(id) ON DELETE CASCADE
-, CONSTRAINT kafka_topic_id UNIQUE(cluster_id, kafka_id)
+, CONSTRAINT kafka_topic_id UNIQUE(cluster_id, k_topic_id)
 );
 
 CREATE TABLE topic_partitions
 ( id             INT NOT NULL GENERATED ALWAYS AS IDENTITY
 , cluster_id     INT NOT NULL
 , topic_id       INT NOT NULL
-, kafka_id       INT NOT NULL
+, k_partition_id INT NOT NULL
 , discovered_at  TIMESTAMP WITH TIME ZONE NOT NULL
 , modified_at    TIMESTAMP WITH TIME ZONE NOT NULL
 , refreshed_at   TIMESTAMP WITH TIME ZONE NOT NULL
@@ -78,7 +78,7 @@ CREATE TABLE topic_partitions
 , PRIMARY KEY(id)
 , CONSTRAINT fk_topic_partition_cluster FOREIGN KEY(cluster_id)     REFERENCES clusters(id) ON DELETE CASCADE
 , CONSTRAINT fk_topic_partition_topic   FOREIGN KEY(topic_id)       REFERENCES topics(id)   ON DELETE CASCADE
-, CONSTRAINT kafka_topic_partition_id UNIQUE(cluster_id, topic_id, kafka_id)
+, CONSTRAINT kafka_topic_partition_id UNIQUE(cluster_id, topic_id, k_partition_id)
 );
 
 CREATE TABLE partition_offsets

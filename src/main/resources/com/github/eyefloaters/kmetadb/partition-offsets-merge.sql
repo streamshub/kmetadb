@@ -6,13 +6,13 @@ USING ( SELECT t0.cluster_id
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS "timestamp"
              , ?         AS leader_epoch
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
-        FROM   topics t0
-        JOIN   topic_partitions t1
-        ON     t1.cluster_id  = t0.cluster_id
-        AND    t1.topic_id    = t0.id
-        WHERE  t0.cluster_id  = ?
-        AND    t0.kafka_id    = ?
-        AND    t1.kafka_id    = ?
+        FROM   topics              t0
+        JOIN   topic_partitions    t1
+        ON     t1.cluster_id     = t0.cluster_id
+        AND    t1.topic_id       = t0.id
+        WHERE  t0.cluster_id     = ?
+        AND    t0.k_topic_id     = ?
+        AND    t1.k_partition_id = ?
              ) AS n
 ON  t.cluster_id         = n.cluster_id
 AND t.topic_partition_id = n.topic_partition_id
