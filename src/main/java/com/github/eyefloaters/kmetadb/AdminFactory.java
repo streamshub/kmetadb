@@ -1,5 +1,11 @@
 package com.github.eyefloaters.kmetadb;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
+import java.util.Base64;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -7,16 +13,24 @@ import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Disposes;
 import jakarta.enterprise.inject.Produces;
 import jakarta.inject.Inject;
 
+import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.Admin;
 import org.apache.kafka.clients.admin.AdminClientConfig;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.config.SslConfigs;
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
@@ -31,6 +45,10 @@ public class AdminFactory {
 
     @Inject
     Config config;
+
+    @Inject
+    @ConfigProperty(name = "kmetadb.security.trust-certificates", defaultValue = "false")
+    boolean trustCertificates;
 
     @Inject
     @ConfigProperty(name = "kmetadb.kafka")
@@ -91,7 +109,7 @@ public class AdminFactory {
     }
 
     Map<String, Object> buildConfig(Set<String> configNames, String clusterKey) {
-        return configNames
+        Map<String, Object> cfg = configNames
             .stream()
             .map(configName -> getClusterConfig(clusterKey, configName)
                     .or(() -> getDefaultConfig(clusterKey, configName))
@@ -99,6 +117,12 @@ public class AdminFactory {
             .filter(Optional::isPresent)
             .map(Optional::get)
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        if (truststoreRequired(cfg)) {
+            trustClusterCertificate(cfg);
+        }
+
+        return cfg;
     }
 
     Optional<String> getClusterConfig(String clusterKey, String configName) {
@@ -121,6 +145,54 @@ public class AdminFactory {
 
     String unquote(String cfg) {
         return BOUNDARY_QUOTES.matcher(cfg).replaceAll("");
+    }
+
+    boolean truststoreRequired(Map<String, Object> cfg) {
+        var securityProtocol = cfg.getOrDefault(CommonClientConfigs.SECURITY_PROTOCOL_CONFIG, "");
+        var trustStoreMissing = !cfg.containsKey(SslConfigs.SSL_TRUSTSTORE_CERTIFICATES_CONFIG);
+
+        return trustCertificates && trustStoreMissing && securityProtocol.toString().contains("SSL");
+    }
+
+    void trustClusterCertificate(Map<String, Object> cfg) {
+        TrustManager trustAllCerts = new X509TrustManager() {
+            public X509Certificate[] getAcceptedIssuers() {
+                return null; // NOSONAR
+            }
+
+            public void checkClientTrusted(X509Certificate[] certs, String authType) { // NOSONAR
+                // all trusted
+            }
+
+            public void checkServerTrusted(X509Certificate[] certs, String authType) { // NOSONAR
+                // all trusted
+            }
+        };
+
+        try {
+            SSLContext sc = SSLContext.getInstance("TLS");
+            sc.init(null, new TrustManager[] { trustAllCerts }, new SecureRandom());
+            SSLSocketFactory factory = sc.getSocketFactory();
+            String bootstrap = (String) cfg.get(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG);
+            String[] hostport = bootstrap.split(",")[0].split(":");
+            ByteArrayOutputStream certificateOut = new ByteArrayOutputStream();
+
+            try (SSLSocket socket = (SSLSocket) factory.createSocket(hostport[0], Integer.parseInt(hostport[1]))) {
+                Certificate[] chain = socket.getSession().getPeerCertificates();
+                for (Certificate certificate : chain) {
+                    certificateOut.write("-----BEGIN CERTIFICATE-----\n".getBytes(StandardCharsets.UTF_8));
+                    certificateOut.write(Base64.getMimeEncoder(80, new byte[] {'\n'}).encode(certificate.getEncoded()));
+                    certificateOut.write("\n-----END CERTIFICATE-----\n".getBytes(StandardCharsets.UTF_8));
+                }
+            }
+
+            cfg.put(SslConfigs.SSL_TRUSTSTORE_CERTIFICATES_CONFIG,
+                    new String(certificateOut.toByteArray(), StandardCharsets.UTF_8).trim());
+            cfg.put(SslConfigs.SSL_TRUSTSTORE_TYPE_CONFIG, "PEM");
+            log.warnf("Certificate hosted at %s:%s is automatically trusted", hostport[0], hostport[1]);
+        } catch (Exception e) {
+            log.infof("Exception setting up trusted certificate: %s", e.getMessage());
+        }
     }
 
     void logConfig(String clientType, Map<String, Object> config) {
