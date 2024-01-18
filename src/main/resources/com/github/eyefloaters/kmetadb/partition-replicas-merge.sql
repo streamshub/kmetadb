@@ -1,12 +1,12 @@
 MERGE INTO partition_replicas AS t
 USING ( SELECT t0.cluster_id
-             , t1.id     AS topic_partition_id
-             , t2.id     AS node_id
-             , ?         AS leader
-             , ?         AS in_sync
-             , ?         AS size
-             , ?         AS offset_lag
-             , ?         AS future
+             , t1.id                               AS topic_partition_id
+             , t2.id                               AS node_id
+             , CAST(? AS BOOLEAN)                  AS leader
+             , CAST(? AS BOOLEAN)                  AS in_sync
+             , CAST(? AS BIGINT)                   AS size
+             , CAST(? AS BIGINT)                   AS offset_lag
+             , CAST(? AS BOOLEAN)                  AS future
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
         FROM   topics t0
         JOIN   topic_partitions    t1

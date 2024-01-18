@@ -10,6 +10,7 @@ import java.sql.Types;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
@@ -165,7 +166,7 @@ public class DataSync {
             try (var stmt = connection.prepareStatement(sql("nodes-merge"))) {
                 Instant t0 = Instant.now();
 
-                for (var node : cluster.nodes()) {
+                for (var node : cluster.allNodes()) {
                     int p = 0;
                     stmt.setInt(++p, cluster.id());
                     stmt.setInt(++p, node.id());
@@ -191,7 +192,7 @@ public class DataSync {
                 Instant t0 = Instant.now();
 
                 for (var node : cluster.nodes()) {
-                    for (var config : cluster.nodeConfigs().get(node.id()).entries()) {
+                    for (var config : cluster.liveNodeConfigs().get(node.id()).entries()) {
                         int p = 0;
                         stmt.setString(++p, config.name());
                         stmt.setString(++p, config.value());
@@ -304,8 +305,9 @@ public class DataSync {
                         var topicPartition = new TopicPartition(topic.name(), partition.partition());
 
                         for (var replica : partition.replicas()) {
-                            var logDir = cluster.logDirs()
-                                    .get(replica.id())
+                            var logDir = Optional.of(cluster.logDirs())
+                                    .map(logDirs -> logDirs.get(replica.id()))
+                                    .orElseGet(Collections::emptyMap)
                                     .values()
                                     .stream()
                                     .map(dir -> dir.replicaInfos().get(topicPartition))

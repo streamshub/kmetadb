@@ -8,11 +8,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConsumerGroupDescription;
 import org.apache.kafka.clients.admin.LogDirDescription;
 import org.apache.kafka.clients.admin.QuorumInfo;
+import org.apache.kafka.clients.admin.QuorumInfo.ReplicaState;
 import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.Node;
@@ -66,6 +69,13 @@ public class Cluster {
         return nodeConfigs;
     }
 
+    public Map<Integer, Config> liveNodeConfigs() {
+        return nodeConfigs.entrySet()
+                .stream()
+                .filter(e -> nodes.stream().anyMatch(n -> n.id() == e.getKey()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
+
     public int controllerId() {
         return controllerId;
     }
@@ -94,26 +104,41 @@ public class Cluster {
         this.quorum = quorum;
     }
 
-    private <T> T mapQuorum(Function<QuorumInfo, T> mapFn) {
-        return Optional.ofNullable(quorum).map(mapFn).orElse(null);
+    private <T> Optional<T> quorum(Function<QuorumInfo, T> mapFn) {
+        return Optional.ofNullable(quorum).map(mapFn);
+    }
+
+    public Collection<Node> allNodes() {
+        return Stream.concat(nodes.stream(), missingNodes().stream()).toList();
+    }
+
+    public Collection<Node> missingNodes() {
+        return quorum(q -> Stream.concat(q.voters().stream(), q.observers().stream()))
+            .orElseGet(Stream::empty)
+            .mapToInt(ReplicaState::replicaId)
+            .distinct()
+            .filter(nodeId -> nodes.stream().noneMatch(n -> n.id() == nodeId))
+            .mapToObj(nodeId -> new Node(nodeId, null, -1))
+            .toList();
     }
 
     public Boolean isLeader(Node node) {
-        return mapQuorum(q -> q.leaderId() == node.id());
+        return quorum(q -> q.leaderId() == node.id()).orElse(null);
     }
 
     public Boolean isVoter(Node node) {
-        return mapQuorum(q -> q.voters().stream().anyMatch(r -> r.replicaId() == node.id()));
+        return quorum(q -> q.voters().stream().anyMatch(r -> r.replicaId() == node.id())).orElse(null);
     }
 
     public Boolean isObserver(Node node) {
-        return mapQuorum(q -> q.observers().stream().anyMatch(r -> r.replicaId() == node.id()));
+        return quorum(q -> q.observers().stream().anyMatch(r -> r.replicaId() == node.id())).orElse(null);
     }
 
     public String report() {
         Map<String, Long> counts = new LinkedHashMap<>();
 
         counts.put("Nodes", Long.valueOf(nodes.size()));
+        counts.put("Nodes (missing)", Long.valueOf(missingNodes().size()));
         counts.put("Node Configs", nodeConfigs.values().stream().mapToLong(c -> c.entries().size()).sum());
         counts.put("Topics", Long.valueOf(topicListings.size()));
         counts.put("Topic Configs", topicConfigs.values().stream().mapToLong(c -> c.entries().size()).sum());
