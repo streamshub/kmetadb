@@ -20,6 +20,7 @@ import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.admin.TopicListing;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.acl.AclBinding;
 
 public class Cluster {
 
@@ -34,6 +35,7 @@ public class Cluster {
     final Map<Uuid, Config> topicConfigs = new HashMap<>();
     final List<TopicDescription> topicDescriptions = new ArrayList<>();
     final Map<String, ConsumerGroupDescription> consumerGroups = new HashMap<>();
+    final List<AclBinding> aclBindings = new ArrayList<>();
 
     int id = -1;
     QuorumInfo quorum;
@@ -100,6 +102,10 @@ public class Cluster {
         return consumerGroups;
     }
 
+    public List<AclBinding> aclBindings() {
+        return aclBindings;
+    }
+
     public void quorum(QuorumInfo quorum) {
         this.quorum = quorum;
     }
@@ -151,6 +157,9 @@ public class Cluster {
         counts.put("Consumer Group Members", consumerGroups.values().stream().mapToLong(g -> g.members().size()).sum());
         counts.put("Consumer Group Assignments", consumerGroups.values().stream()
                 .flatMap(g -> g.members().stream()).mapToLong(m -> m.assignment().topicPartitions().size()).sum());
+
+        counts.put("ACL Resources", aclBindings().stream().map(AclBinding::pattern).distinct().count());
+        counts.put("ACL Entries", aclBindings().stream().map(AclBinding::entry).distinct().count());
 
         int labelWidth = counts.keySet().stream().map(String::length).max(Integer::compare).orElse(30);
         String template = "\t%%-%ds: %%9d%n".formatted(labelWidth);

@@ -31,6 +31,13 @@ import org.apache.kafka.clients.admin.ReplicaInfo;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.acl.AccessControlEntry;
+import org.apache.kafka.common.acl.AclBinding;
+import org.apache.kafka.common.acl.AclOperation;
+import org.apache.kafka.common.acl.AclPermissionType;
+import org.apache.kafka.common.resource.PatternType;
+import org.apache.kafka.common.resource.ResourcePattern;
+import org.apache.kafka.common.resource.ResourceType;
 import org.eclipse.microprofile.context.ManagedExecutor;
 import org.jboss.logging.Logger;
 import org.jboss.logging.MDC;
@@ -104,6 +111,7 @@ public class DataSync {
             refreshTopics(now, cluster);
             refreshTopicPartitions(now, cluster);
             refreshConsumerGroups(now, cluster);
+            refreshAclBindings(now, cluster);
             transaction.commit();
         } catch (Exception e) {
             logException(e, "Kafka cluster metadata");
@@ -518,6 +526,141 @@ public class DataSync {
             }
         } catch (SQLException e1) {
             reportSQLException(e1, "Failed to insert to `consumer_group_offsets` table");
+        }
+    }
+
+    void refreshAclBindings(Timestamp now, Cluster cluster) {
+        try (var connection = dataSource.getConnection()) {
+            try (var stmt = connection.prepareStatement(sql("acl-resources-merge"))) {
+                Instant t0 = Instant.now();
+
+                for (var resource : cluster.aclBindings().stream().map(AclBinding::pattern).distinct().toList()) {
+                    int p = 0;
+                    stmt.setInt(++p, cluster.id());
+                    stmt.setString(++p, resource.resourceType().name());
+                    stmt.setString(++p, resource.name());
+                    stmt.setString(++p, resource.patternType().name());
+                    stmt.setTimestamp(++p, now);
+                }
+
+                logRefresh("acl_resources", t0, stmt.executeBatch());
+            }
+
+            try (var stmt = connection.prepareStatement("""
+                    SELECT id
+                         , resource_type
+                         , name
+                         , pattern_type
+                    FROM   acl_resources
+                    WHERE  cluster_id = ?
+                    AND    refreshed_at < ?
+                    """,
+                    ResultSet.TYPE_FORWARD_ONLY,
+                    ResultSet.CONCUR_UPDATABLE)) {
+                stmt.setInt(1, cluster.id());
+                stmt.setTimestamp(2, now);
+
+                try (var results = stmt.executeQuery()) {
+                    while (results.next()) {
+                        if (log.isInfoEnabled()) {
+                            var resource = new ResourcePattern(
+                                    ResourceType.valueOf(results.getString(2)),
+                                    results.getString(3),
+                                    PatternType.valueOf(results.getString(4)));
+                            log.infof("Deleted ACL Resource: %s", resource);
+                        }
+                        results.deleteRow();
+                    }
+                }
+            }
+        } catch (SQLException e1) {
+            reportSQLException(e1, "Failed to insert to `acl_resources` table");
+        }
+
+        try (var connection = dataSource.getConnection()) {
+            try (var stmt = connection.prepareStatement(sql("acl-entries-merge"))) {
+                Instant t0 = Instant.now();
+
+                for (var entry : cluster.aclBindings().stream().map(AclBinding::entry).distinct().toList()) {
+                    int p = 0;
+                    stmt.setInt(++p, cluster.id());
+                    stmt.setString(++p, entry.principal());
+                    stmt.setString(++p, entry.host());
+                    stmt.setString(++p, entry.operation().name());
+                    stmt.setString(++p, entry.permissionType().name());
+                    stmt.setTimestamp(++p, now);
+                }
+
+                logRefresh("acl_entries", t0, stmt.executeBatch());
+            }
+
+            try (var stmt = connection.prepareStatement("""
+                    SELECT id
+                         , principal
+                         , host
+                         , operation
+                         , permission_type
+                    FROM   acl_entries
+                    WHERE  cluster_id = ?
+                    AND    refreshed_at < ?
+                    """,
+                    ResultSet.TYPE_FORWARD_ONLY,
+                    ResultSet.CONCUR_UPDATABLE)) {
+                stmt.setInt(1, cluster.id());
+                stmt.setTimestamp(2, now);
+
+                try (var results = stmt.executeQuery()) {
+                    while (results.next()) {
+                        if (log.isInfoEnabled()) {
+                            var resource = new AccessControlEntry(
+                                    results.getString(2),
+                                    results.getString(3),
+                                    AclOperation.valueOf(results.getString(4)),
+                                    AclPermissionType.valueOf(results.getString(5)));
+                            log.infof("Deleted ACL Entry: %s", resource);
+                        }
+                        results.deleteRow();
+                    }
+                }
+            }
+        } catch (SQLException e1) {
+            reportSQLException(e1, "Failed to insert to `acl_resources` table");
+        }
+
+        try (var connection = dataSource.getConnection()) {
+            try (var stmt = connection.prepareStatement(sql("acl-bindings-merge"))) {
+                Instant t0 = Instant.now();
+
+                for (var binding : cluster.aclBindings()) {
+                    int p = 0;
+                    stmt.setTimestamp(++p, now);
+                    stmt.setInt(++p, cluster.id());
+                    stmt.setString(++p, binding.pattern().resourceType().name());
+                    stmt.setString(++p, binding.pattern().name());
+                    stmt.setString(++p, binding.pattern().patternType().name());
+                    stmt.setString(++p, binding.entry().principal());
+                    stmt.setString(++p, binding.entry().host());
+                    stmt.setString(++p, binding.entry().operation().name());
+                    stmt.setString(++p, binding.entry().permissionType().name());
+                }
+
+                logRefresh("acl_bindings", t0, stmt.executeBatch());
+            }
+
+            try (var stmt = connection.prepareStatement("""
+                    DELETE
+                    FROM   acl_bindings
+                    WHERE  cluster_id = ?
+                    AND    refreshed_at < ?
+                    """)) {
+                stmt.setInt(1, cluster.id());
+                stmt.setTimestamp(2, now);
+
+                int deleteCount = stmt.executeUpdate();
+                log.infof("Deleted %d ACL Bindings", deleteCount);
+            }
+        } catch (SQLException e1) {
+            reportSQLException(e1, "Failed to insert to `acl_bindings` table");
         }
     }
 

@@ -212,3 +212,48 @@ CREATE TABLE consumer_group_offsets
 , CONSTRAINT fk_consumer_group_member_group FOREIGN KEY(consumer_group_id) REFERENCES consumer_groups(id) ON DELETE CASCADE
 , CONSTRAINT kafka_consumer_group_offset_id UNIQUE(cluster_id, consumer_group_id, topic_partition_id)
 );
+
+CREATE TABLE acl_resources
+( id                 INT NOT NULL GENERATED ALWAYS AS IDENTITY
+, cluster_id         INT NOT NULL
+, resource_type      VARCHAR NOT NULL
+, name               VARCHAR NOT NULL
+, pattern_type       VARCHAR NOT NULL
+, discovered_at      TIMESTAMP WITH TIME ZONE NOT NULL
+, modified_at        TIMESTAMP WITH TIME ZONE NOT NULL
+, refreshed_at       TIMESTAMP WITH TIME ZONE NOT NULL
+-- Constraints
+, PRIMARY KEY(id)
+, CONSTRAINT fk_acl_resource_cluster FOREIGN KEY(cluster_id) REFERENCES clusters(id) ON DELETE CASCADE
+, CONSTRAINT uk_acl_resource UNIQUE(cluster_id, resource_type, name, pattern_type)
+);
+
+CREATE TABLE acl_entries
+( id                 INT NOT NULL GENERATED ALWAYS AS IDENTITY
+, cluster_id         INT NOT NULL
+, principal          VARCHAR NOT NULL
+, host               VARCHAR NOT NULL
+, operation          VARCHAR NOT NULL
+, permission_type    VARCHAR NOT NULL
+, discovered_at      TIMESTAMP WITH TIME ZONE NOT NULL
+, modified_at        TIMESTAMP WITH TIME ZONE NOT NULL
+, refreshed_at       TIMESTAMP WITH TIME ZONE NOT NULL
+-- Constraints
+, PRIMARY KEY(id)
+, CONSTRAINT fk_acl_entry_cluster FOREIGN KEY(cluster_id) REFERENCES clusters(id) ON DELETE CASCADE
+, CONSTRAINT uk_acl_entry UNIQUE(cluster_id, principal, host, operation, permission_type)
+);
+
+CREATE TABLE acl_bindings
+( id                 INT NOT NULL GENERATED ALWAYS AS IDENTITY
+, cluster_id         INT NOT NULL
+, resource_id        INT NOT NULL
+, entry_id           INT NOT NULL
+, discovered_at      TIMESTAMP WITH TIME ZONE NOT NULL
+, modified_at        TIMESTAMP WITH TIME ZONE NOT NULL
+, refreshed_at       TIMESTAMP WITH TIME ZONE NOT NULL
+-- Constraints
+, PRIMARY KEY(id)
+, CONSTRAINT fk_acl_binding_cluster FOREIGN KEY(cluster_id) REFERENCES clusters(id) ON DELETE CASCADE
+, CONSTRAINT uk_acl_binding UNIQUE(cluster_id, resource_id, entry_id)
+);

@@ -41,6 +41,7 @@ import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicCollection;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
+import org.apache.kafka.common.acl.AclBindingFilter;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.jboss.logging.Logger;
@@ -69,7 +70,7 @@ public class ClusterScraper {
 
     @PostConstruct
     void startup() {
-        adminClients.forEach((clusterName, adminClient) -> {
+        adminClients.forEach((clusterName, adminClient) ->
             adminClient.describeCluster()
                 .clusterId()
                 .toCompletionStage()
@@ -77,8 +78,7 @@ public class ClusterScraper {
                     MDC.put("cluster.id", clusterId);
                     MDC.put("cluster.name", clusterName);
                     log.info("connected");
-                });
-        });
+                }));
     }
 
     public Set<String> knownClusterNames() {
@@ -106,6 +106,7 @@ public class ClusterScraper {
             .thenCompose(c -> addTopicDescriptions(adminClient, c))
             .thenCompose(c -> addTopicConfigs(adminClient, c))
             .thenCompose(c -> addConsumerGroups(adminClient, c))
+            .thenCompose(c -> addAclBindings(adminClient, c))
             .toCompletableFuture()
             .join();
     }
@@ -188,7 +189,7 @@ public class ClusterScraper {
                         Instant ts = Instant.ofEpochMilli(rec.timestamp());
                         targets.get(topicPartition).get(round).offsetTimestamp(ts);
 
-                        log.debugf("timestamp of offset %d in topic-partition %s-%d is %s",
+                        log.tracef("timestamp of offset %d in topic-partition %s-%d is %s",
                                 rec.offset(),
                                 rec.topic(),
                                 rec.partition(),
@@ -448,6 +449,18 @@ public class ClusterScraper {
                                         cluster.consumerGroups().put(pending.getKey(), group)))
                             .map(CompletionStage::toCompletableFuture)
                             .collect(awaitingAll())))
+            .thenApply(nothing -> cluster);
+    }
+
+    CompletionStage<Cluster> addAclBindings(Admin adminClient, Cluster cluster) {
+        return adminClient.describeAcls(AclBindingFilter.ANY)
+            .values()
+            .toCompletionStage()
+            .thenAccept(cluster.aclBindings()::addAll)
+            .exceptionally(error -> {
+                log.warnf("exception describing ACLs: %s", error.getMessage());
+                return null;
+            })
             .thenApply(nothing -> cluster);
     }
 

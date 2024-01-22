@@ -35,8 +35,6 @@ import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
-import io.smallrye.common.annotation.Identifier;
-
 @ApplicationScoped
 public class ClientFactory {
 
@@ -53,10 +51,6 @@ public class ClientFactory {
     @Inject
     @ConfigProperty(name = "kmetadb.kafka")
     Map<String, String> clusterNames;
-
-    @Inject
-    @Identifier("default-kafka-broker")
-    Map<String, Object> defaultClusterConfigs;
 
     @Produces
     Map<String, Admin> getAdmins() {
@@ -134,13 +128,11 @@ public class ClientFactory {
     }
 
     Optional<String> getDefaultConfig(String clusterKey, String configName) {
-        if (defaultClusterConfigs.containsKey(configName)) {
-            log.tracef("DEFAULT config %s for cluster %s", configName, clusterKey);
-            String cfg = defaultClusterConfigs.get(configName).toString();
-            return Optional.of(unquote(cfg));
-        }
-
-        return Optional.empty();
+        return config.getOptionalValue("kafka." + configName, String.class)
+            .map(cfg -> {
+                log.tracef("DEFAULT config %s for cluster %s", configName, clusterKey);
+                return unquote(cfg);
+            });
     }
 
     String unquote(String cfg) {
