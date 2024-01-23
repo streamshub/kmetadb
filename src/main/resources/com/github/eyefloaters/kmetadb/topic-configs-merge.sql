@@ -1,13 +1,13 @@
 MERGE INTO topic_configs AS t
 USING ( SELECT topics.cluster_id AS cluster_id
              , topics.id AS topic_id
-             , ? AS name
-             , ? AS "value"
-             , ? AS source
-             , ? AS sensitive
-             , ? AS read_only
-             , ? AS "type"
-             , ? AS documentation
+             , CAST(? AS VARCHAR) AS name
+             , CAST(? AS VARCHAR) AS "value"
+             , CAST(? AS VARCHAR) AS source
+             , CAST(? AS BOOLEAN) AS sensitive
+             , CAST(? AS BOOLEAN) AS read_only
+             , CAST(? AS VARCHAR) AS "type"
+             , CAST(? AS VARCHAR) AS documentation
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
         FROM   topics
         WHERE  topics.cluster_id = ?

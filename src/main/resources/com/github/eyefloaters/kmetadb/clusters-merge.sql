@@ -1,6 +1,6 @@
 MERGE INTO clusters AS t
-USING ( SELECT ? AS k_cluster_id
-             , ? AS name
+USING ( SELECT CAST(? AS VARCHAR) AS k_cluster_id
+             , CAST(? AS VARCHAR) AS name
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
              ) AS n
 ON t.k_cluster_id = n.k_cluster_id

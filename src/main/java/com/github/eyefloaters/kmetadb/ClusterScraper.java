@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
@@ -68,6 +69,9 @@ public class ClusterScraper {
     @Inject
     Map<String, Consumer<byte[], byte[]>> consumers;
 
+    @Inject
+    ApplicationStatus status;
+
     @PostConstruct
     void startup() {
         adminClients.forEach((clusterName, adminClient) ->
@@ -93,6 +97,11 @@ public class ClusterScraper {
         Cluster cluster = KafkaFuture.allOf(clusterResult.clusterId(), clusterResult.nodes(), clusterResult.controller())
                 .toCompletionStage()
                 .thenApply(nothing -> newCluster(clusterName, clusterResult))
+                .exceptionally(error -> {
+                    status.assertRunning();
+                    log.warnf("exception describing cluster: %s", error.getMessage());
+                    throw error instanceof CompletionException ce ? ce : new CompletionException(error);
+                })
                 .toCompletableFuture()
                 .join();
 
@@ -127,6 +136,7 @@ public class ClusterScraper {
                     .toCompletionStage()
                     .thenApply(offsets -> groupOffsets.put(group, offsets))
                     .exceptionally(error -> {
+                        status.assertRunning();
                         log.warnf("exception listing group offsets for group %s: %s",
                                 group,
                                 error.getMessage());
@@ -167,13 +177,15 @@ public class ClusterScraper {
             int attempt = 0;
 
             while (!assignments.isEmpty() && Instant.now().isBefore(deadline)) {
+                status.assertRunning();
                 consumer.assign(assignments);
 
                 assignments.forEach(topicPartition ->
                     consumer.seek(topicPartition, targets.get(topicPartition).get(round).offset()));
 
                 var result = consumer.poll(Duration.between(Instant.now(), deadline));
-                log.debugf("consumer polled %s record(s) in round %d, attempt %d",
+
+                log.tracef("consumer polled %s record(s) in round %d, attempt %d",
                         result.count(),
                         round,
                         ++attempt);
@@ -271,6 +283,7 @@ public class ClusterScraper {
                                     .computeIfAbsent(partition.partition(), k -> new HashMap<>())
                                     .put(spec.getKey(), offset))
                             .exceptionally(error -> {
+                                status.assertRunning();
                                 log.warnf("exception fetching %s topic offsets %s{name=%s}: %s",
                                         spec.getKey(),
                                         topicNames.get(partition.topic()),
@@ -304,6 +317,7 @@ public class ClusterScraper {
                     .toCompletionStage()
                     .thenAccept(logDirs -> cluster.logDirs().put(entry.getKey(), logDirs))
                     .exceptionally(error -> {
+                        status.assertRunning();
                         log.warnf("exception fetching log dirs for node: %d",
                                 entry.getKey());
                         return null;
@@ -318,6 +332,7 @@ public class ClusterScraper {
             .toCompletionStage()
             .thenAccept(cluster::quorum)
             .exceptionally(error -> {
+                status.assertRunning();
                 if (error.getCause() instanceof UnsupportedVersionException) {
                     log.debugf("describing metadata quorum not supported by broker %s", cluster.name());
                 } else {
@@ -395,6 +410,7 @@ public class ClusterScraper {
                     .toCompletionStage()
                     .thenAccept(config -> configConsumer.accept(pending.getKey(), config))
                     .exceptionally(error -> {
+                        status.assertRunning();
                         errorConsumer.accept(pending.getKey(), error);
                         return null;
                     }))
@@ -415,6 +431,7 @@ public class ClusterScraper {
                     .toCompletionStage()
                     .thenAccept(cluster.topicDescriptions()::add)
                     .exceptionally(error -> {
+                        status.assertRunning();
                         log.warnf("exception describing topic %s{name=%s}: %s",
                                 pending.getKey(),
                                 cluster.topicListings().get(pending.getKey()).name(),
@@ -458,6 +475,7 @@ public class ClusterScraper {
             .toCompletionStage()
             .thenAccept(cluster.aclBindings()::addAll)
             .exceptionally(error -> {
+                status.assertRunning();
                 log.warnf("exception describing ACLs: %s", error.getMessage());
                 return null;
             })

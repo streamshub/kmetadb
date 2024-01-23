@@ -1,10 +1,10 @@
 MERGE INTO nodes AS t
-USING ( SELECT ? AS cluster_id
-             , ? AS k_node_id
-             , ? AS host
-             , ? AS port
-             , ? AS rack
-             , ? AS controller
+USING ( SELECT CAST(? AS INT)     AS cluster_id
+             , CAST(? AS INT)     AS k_node_id
+             , CAST(? AS VARCHAR) AS host
+             , CAST(? AS INT)     AS port
+             , CAST(? AS VARCHAR) AS rack
+             , CAST(? AS BOOLEAN) AS controller
              , CAST(? AS BOOLEAN) AS leader
              , CAST(? AS BOOLEAN) AS voter
              , CAST(? AS BOOLEAN) AS observer

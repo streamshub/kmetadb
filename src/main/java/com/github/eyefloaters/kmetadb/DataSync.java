@@ -9,19 +9,18 @@ import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 
 import javax.sql.DataSource;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
-import jakarta.enterprise.event.Shutdown;
 import jakarta.enterprise.event.Startup;
 import jakarta.inject.Inject;
 import jakarta.transaction.SystemException;
@@ -62,7 +61,8 @@ public class DataSync {
     @Inject
     ManagedExecutor exec;
 
-    AtomicBoolean running = new AtomicBoolean(true);
+    @Inject
+    ApplicationStatus status;
 
     void start(@Observes Startup startupEvent /* NOSONAR */) {
         for (String clusterName : scraper.knownClusterNames()) {
@@ -70,14 +70,10 @@ public class DataSync {
         }
     }
 
-    void stop(@Observes Shutdown shutdownEvent /* NOSONAR */) {
-        running.set(false);
-    }
-
     void metadataLoop(String clusterName) {
         MDC.put("cluster.name", clusterName);
 
-        while (running.get()) {
+        while (status.isRunning()) {
             Instant deadline = Instant.now().plusSeconds(30);
 
             try {
@@ -86,7 +82,7 @@ public class DataSync {
                 log.errorf(e, "Failed to refresh Kafka cluster metadata");
             }
 
-            if (running.get()) {
+            if (status.isRunning()) {
                 long remaining = deadline.getEpochSecond() - Instant.now().getEpochSecond();
 
                 if (remaining > 0) {
@@ -100,7 +96,7 @@ public class DataSync {
 
     void refreshMetadata(String clusterName, Instant deadline) {
         final Instant begin = Instant.now();
-        final Timestamp now = Timestamp.from(begin);
+        final Timestamp now = Timestamp.from(begin.truncatedTo(ChronoUnit.MICROS));
 
         Cluster cluster = scraper.scrape(clusterName);
 
@@ -125,6 +121,7 @@ public class DataSync {
         }
 
         while (Instant.now().isBefore(deadline)) {
+            status.assertRunning();
             final Instant throttle = Instant.now().plusSeconds(2);
 
             try {
@@ -137,10 +134,12 @@ public class DataSync {
                 return;
             }
 
-            long remaining = throttle.getEpochSecond() - Instant.now().getEpochSecond();
+            long remaining = throttle.toEpochMilli() - Instant.now().toEpochMilli();
 
             if (remaining > 0) {
-                LockSupport.parkNanos(TimeUnit.SECONDS.toNanos(remaining));
+                log.tracef("Parking for %d millis", remaining);
+                LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(remaining));
+                log.trace("Unparked");
             }
         }
     }
@@ -241,7 +240,14 @@ public class DataSync {
                 logRefresh("topics", t0, stmt.executeBatch());
             }
 
-            try (var stmt = connection.prepareStatement("SELECT id, name FROM topics WHERE cluster_id = ? AND refreshed_at < ?",
+            try (var stmt = connection.prepareStatement("""
+                    SELECT id
+                         , name
+                         , refreshed_at
+                    FROM   topics
+                    WHERE  cluster_id = ?
+                    AND    refreshed_at < ?
+                    """,
                     ResultSet.TYPE_FORWARD_ONLY,
                     ResultSet.CONCUR_UPDATABLE)) {
                 stmt.setInt(1, cluster.id());
@@ -249,7 +255,7 @@ public class DataSync {
 
                 try (var results = stmt.executeQuery()) {
                     while (results.next()) {
-                        log.infof("deleted topic: %s", results.getString(2));
+                        log.infof("deleted topic: %s (refreshed_at=%s, now=%s)", results.getString(2), results.getTimestamp(3), now);
                         results.deleteRow();
                     }
                 }
@@ -382,7 +388,7 @@ public class DataSync {
 
                 try (var results = stmt.executeQuery()) {
                     while (results.next()) {
-                        log.infof("Deleted consumer group: %s", results.getString(2));
+                        log.infof("deleted consumer group: %s", results.getString(2));
                         results.deleteRow();
                     }
                 }
@@ -425,7 +431,7 @@ public class DataSync {
 
                 try (var results = stmt.executeQuery()) {
                     while (results.next()) {
-                        log.infof("Deleted consumer group member: member_id=%s, client_id=%s, group_instance_id=%s",
+                        log.infof("deleted consumer group member: member_id=%s, client_id=%s, group_instance_id=%s",
                                 results.getString(2),
                                 results.getString(3),
                                 results.getString(4));
@@ -468,7 +474,7 @@ public class DataSync {
 
                 try (var results = stmt.executeQuery()) {
                     while (results.next()) {
-                        log.infof("Deleted consumer group member assignment: %s", results.getString(1));
+                        log.infof("deleted consumer group member assignment: %s", results.getString(1));
                         results.deleteRow();
                     }
                 }
@@ -480,7 +486,7 @@ public class DataSync {
 
     void refreshConsumerGroupOffsets(Cluster cluster) {
         var groupOffsets = scraper.scrapeGroupOffsets(cluster);
-        Timestamp offsetsRefreshedAt = Timestamp.from(Instant.now());
+        Timestamp offsetsRefreshedAt = Timestamp.from(Instant.now().truncatedTo(ChronoUnit.MICROS));
 
         try (var connection = dataSource.getConnection()) {
             try (var stmt = connection.prepareStatement(sql("consumer-group-offsets-merge"))) {
@@ -511,7 +517,13 @@ public class DataSync {
                 logRefresh("consumer_group_offsets", t0, stmt.executeBatch());
             }
 
-            try (var stmt = connection.prepareStatement("SELECT id FROM consumer_group_offsets WHERE cluster_id = ? AND refreshed_at < ?",
+            try (var stmt = connection.prepareStatement("""
+                    SELECT id
+                         , refreshed_at
+                    FROM   consumer_group_offsets
+                    WHERE  cluster_id = ?
+                    AND    refreshed_at < ?
+                    """,
                     ResultSet.TYPE_FORWARD_ONLY,
                     ResultSet.CONCUR_UPDATABLE)) {
                 stmt.setInt(1, cluster.id());
@@ -519,7 +531,7 @@ public class DataSync {
 
                 try (var results = stmt.executeQuery()) {
                     while (results.next()) {
-                        log.infof("Deleted consumer group offset: %s", results.getString(1));
+                        log.infof("deleted consumer group offset: %s (refreshed_at=%s, now=%s)", results.getString(1), results.getTimestamp(2), offsetsRefreshedAt);
                         results.deleteRow();
                     }
                 }
@@ -567,7 +579,7 @@ public class DataSync {
                                     ResourceType.valueOf(results.getString(2)),
                                     results.getString(3),
                                     PatternType.valueOf(results.getString(4)));
-                            log.infof("Deleted ACL Resource: %s", resource);
+                            log.debugf("deleted ACL Resource: %s", resource);
                         }
                         results.deleteRow();
                     }
@@ -617,7 +629,7 @@ public class DataSync {
                                     results.getString(3),
                                     AclOperation.valueOf(results.getString(4)),
                                     AclPermissionType.valueOf(results.getString(5)));
-                            log.infof("Deleted ACL Entry: %s", resource);
+                            log.infof("deleted ACL Entry: %s", resource);
                         }
                         results.deleteRow();
                     }
@@ -657,7 +669,7 @@ public class DataSync {
                 stmt.setTimestamp(2, now);
 
                 int deleteCount = stmt.executeUpdate();
-                log.infof("Deleted %d ACL Bindings", deleteCount);
+                log.infof("deleted %d ACL Bindings", deleteCount);
             }
         } catch (SQLException e1) {
             reportSQLException(e1, "Failed to insert to `acl_bindings` table");
@@ -666,7 +678,7 @@ public class DataSync {
 
     void refreshTopicOffsets(Cluster cluster) {
         var topicOffsets = scraper.scrapeTopicOffests(cluster);
-        Timestamp offsetsRefreshedAt = Timestamp.from(Instant.now());
+        Timestamp offsetsRefreshedAt = Timestamp.from(Instant.now().truncatedTo(ChronoUnit.MICROS));
 
         try (var connection = dataSource.getConnection()) {
             try (var stmt = connection.prepareStatement(sql("partition-offsets-merge"))) {
@@ -736,7 +748,7 @@ public class DataSync {
     }
 
     void logException(Exception thrown, String content) {
-        if (running.get()) {
+        if (status.isRunning()) {
             log.errorf(thrown, "failed to refresh %s", content);
 
             try {
@@ -755,6 +767,8 @@ public class DataSync {
     }
 
     void reportSQLException(SQLException sql, String message) {
+        status.assertRunning();
+
         log.error(message, sql);
         var next = sql.getNextException();
         int n = 0;

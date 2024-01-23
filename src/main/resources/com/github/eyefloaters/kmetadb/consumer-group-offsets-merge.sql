@@ -1,11 +1,11 @@
 MERGE INTO consumer_group_offsets AS t
-USING ( SELECT cg.cluster_id AS cluster_id
-             , cg.id         AS consumer_group_id
-             , tp.id         AS topic_partition_id
-             , ? AS "offset"
+USING ( SELECT cg.cluster_id      AS cluster_id
+             , cg.id              AS consumer_group_id
+             , tp.id              AS topic_partition_id
+             , CAST(? AS BIGINT)  AS "offset"
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS offset_timestamp
-             , ? AS metadata
-             , ? AS leader_epoch
+             , CAST(? AS VARCHAR) AS metadata
+             , CAST(? AS BIGINT)  AS leader_epoch
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
         FROM   consumer_groups     cg
         JOIN   topics              t

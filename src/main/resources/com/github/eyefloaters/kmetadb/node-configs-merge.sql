@@ -1,13 +1,13 @@
 MERGE INTO node_configs AS t
 USING ( SELECT nodes.cluster_id AS cluster_id
              , nodes.id AS node_id
-             , ? AS name
-             , ? AS "value"
-             , ? AS source
-             , ? AS sensitive
-             , ? AS read_only
-             , ? AS "type"
-             , ? AS documentation
+             , CAST(? AS VARCHAR) AS name
+             , CAST(? AS VARCHAR) AS "value"
+             , CAST(? AS VARCHAR) AS source
+             , CAST(? AS BOOLEAN) AS sensitive
+             , CAST(? AS BOOLEAN) AS read_only
+             , CAST(? AS VARCHAR) AS "type"
+             , CAST(? AS VARCHAR) AS documentation
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
         FROM   nodes
         WHERE  nodes.cluster_id = ?

@@ -1,7 +1,7 @@
 MERGE INTO acl_bindings AS t
 USING ( SELECT ar.cluster_id
-             , ar.resource_id
-             , ae.entry_id
+             , ar.id AS resource_id
+             , ae.id AS entry_id
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
         FROM   acl_resources      ar
         JOIN   acl_entries        ae

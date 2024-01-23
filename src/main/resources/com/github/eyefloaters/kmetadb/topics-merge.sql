@@ -1,8 +1,8 @@
 MERGE INTO topics AS t
-USING ( SELECT ? AS cluster_id
-             , ? AS k_topic_id
-             , ? AS name
-             , ? AS internal
+USING ( SELECT CAST(? AS INT)     AS cluster_id
+             , CAST(? AS VARCHAR) AS k_topic_id
+             , CAST(? AS VARCHAR) AS name
+             , CAST(? AS BOOLEAN) AS internal
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
              ) AS n
 ON  t.cluster_id     = n.cluster_id

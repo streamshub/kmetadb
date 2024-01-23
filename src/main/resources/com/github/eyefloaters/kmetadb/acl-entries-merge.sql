@@ -1,9 +1,9 @@
 MERGE INTO acl_entries AS t
-USING ( SELECT ? AS cluster_id
-             , ? AS principal
-             , ? AS host
-             , ? AS operation
-             , ? AS permission_type
+USING ( SELECT CAST(? AS INT)     AS cluster_id
+             , CAST(? AS VARCHAR) AS principal
+             , CAST(? AS VARCHAR) AS host
+             , CAST(? AS VARCHAR) AS operation
+             , CAST(? AS VARCHAR) AS permission_type
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
              ) AS n
 ON  t.cluster_id      = n.cluster_id

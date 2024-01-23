@@ -1,7 +1,7 @@
 MERGE INTO topic_partitions AS t
 USING ( SELECT topics.cluster_id
-             , topics.id AS topic_id
-             , ?         AS k_partition_id
+             , topics.id      AS topic_id
+             , CAST(? AS INT) AS k_partition_id
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
         FROM   topics
         WHERE  topics.cluster_id = ?

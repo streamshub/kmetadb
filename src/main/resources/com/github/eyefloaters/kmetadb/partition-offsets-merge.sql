@@ -1,10 +1,10 @@
 MERGE INTO partition_offsets AS t
 USING ( SELECT t0.cluster_id
-             , t1.id     AS topic_partition_id
-             , ?         AS offset_type
-             , ?         AS "offset"
+             , t1.id              AS topic_partition_id
+             , CAST(? AS VARCHAR) AS offset_type
+             , CAST(? AS BIGINT)  AS "offset"
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS "timestamp"
-             , ?         AS leader_epoch
+             , CAST(? AS BIGINT)  AS leader_epoch
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
         FROM   topics              t0
         JOIN   topic_partitions    t1

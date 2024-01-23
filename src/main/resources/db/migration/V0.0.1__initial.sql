@@ -189,7 +189,7 @@ CREATE TABLE consumer_group_member_assignments
 -- Constraints
 , PRIMARY KEY(id)
 , CONSTRAINT fk_consumer_group_member_assignment_cluster FOREIGN KEY(cluster_id) REFERENCES clusters(id) ON DELETE CASCADE
-, CONSTRAINT fk_consumer_group_member_assignment_member FOREIGN KEY(consumer_group_member_id) REFERENCES consumer_group_members(id)
+, CONSTRAINT fk_consumer_group_member_assignment_member FOREIGN KEY(consumer_group_member_id) REFERENCES consumer_group_members(id) ON DELETE CASCADE
 , CONSTRAINT kafka_consumer_group_member_assignment UNIQUE(cluster_id, consumer_group_member_id, topic_partition_id)
 );
 
@@ -208,8 +208,8 @@ CREATE TABLE consumer_group_offsets
 , refreshed_at       TIMESTAMP WITH TIME ZONE NOT NULL
 -- Constraints
 , PRIMARY KEY(id)
-, CONSTRAINT fk_consumer_group_member_cluster FOREIGN KEY(cluster_id) REFERENCES clusters(id) ON DELETE CASCADE
-, CONSTRAINT fk_consumer_group_member_group FOREIGN KEY(consumer_group_id) REFERENCES consumer_groups(id) ON DELETE CASCADE
+, CONSTRAINT fk_consumer_group_offset_cluster FOREIGN KEY(cluster_id) REFERENCES clusters(id) ON DELETE CASCADE
+, CONSTRAINT fk_consumer_group_offset_group FOREIGN KEY(consumer_group_id) REFERENCES consumer_groups(id) ON DELETE CASCADE
 , CONSTRAINT kafka_consumer_group_offset_id UNIQUE(cluster_id, consumer_group_id, topic_partition_id)
 );
 

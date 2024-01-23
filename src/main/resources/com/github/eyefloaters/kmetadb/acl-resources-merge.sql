@@ -1,8 +1,8 @@
 MERGE INTO acl_resources AS t
-USING ( SELECT ? AS cluster_id
-             , ? AS resource_type
-             , ? AS name
-             , ? AS pattern_type
+USING ( SELECT CAST(? AS INT)     AS cluster_id
+             , CAST(? AS VARCHAR) AS resource_type
+             , CAST(? AS VARCHAR) AS name
+             , CAST(? AS VARCHAR) AS pattern_type
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
              ) AS n
 ON  t.cluster_id     = n.cluster_id

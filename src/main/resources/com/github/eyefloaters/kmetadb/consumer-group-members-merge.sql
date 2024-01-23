@@ -1,10 +1,10 @@
 MERGE INTO consumer_group_members AS t
-USING ( SELECT cg.cluster_id AS cluster_id
-             , cg.id         AS consumer_group_id
-             , ? AS member_id
-             , ? AS group_instance_id
-             , ? AS client_id
-             , ? AS host
+USING ( SELECT cg.cluster_id      AS cluster_id
+             , cg.id              AS consumer_group_id
+             , CAST(? AS VARCHAR) AS member_id
+             , CAST(? AS VARCHAR) AS group_instance_id
+             , CAST(? AS VARCHAR) AS client_id
+             , CAST(? AS VARCHAR) AS host
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
         FROM   consumer_groups cg
         WHERE  cg.cluster_id = ?

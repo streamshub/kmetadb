@@ -1,10 +1,10 @@
 MERGE INTO consumer_groups AS t
-USING ( SELECT nodes.cluster_id AS cluster_id
-             , ?                AS group_id
-             , nodes.id         AS coordinator_id
-             , ? AS simple
-             , ? AS state
-             , ? AS partition_assignor
+USING ( SELECT nodes.cluster_id   AS cluster_id
+             , CAST(? AS VARCHAR) AS group_id
+             , nodes.id           AS coordinator_id
+             , CAST(? AS BOOLEAN) AS simple
+             , CAST(? AS VARCHAR) AS state
+             , CAST(? AS VARCHAR) AS partition_assignor
              , CAST(? AS TIMESTAMP WITH TIME ZONE) AS refreshed_at
         FROM   nodes
         WHERE  nodes.cluster_id = ?
