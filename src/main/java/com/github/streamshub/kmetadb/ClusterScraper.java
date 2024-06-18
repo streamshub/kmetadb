@@ -1,4 +1,4 @@
-package com.github.eyefloaters.kmetadb;
+package com.github.streamshub.kmetadb;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -48,9 +48,9 @@ import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.jboss.logging.Logger;
 import org.jboss.logging.MDC;
 
-import com.github.eyefloaters.kmetadb.model.Cluster;
-import com.github.eyefloaters.kmetadb.model.OffsetMetadataAndTimestamp;
-import com.github.eyefloaters.kmetadb.model.TopicPartitionOffset;
+import com.github.streamshub.kmetadb.model.Cluster;
+import com.github.streamshub.kmetadb.model.OffsetMetadataAndTimestamp;
+import com.github.streamshub.kmetadb.model.TopicPartitionOffset;
 
 @ApplicationScoped
 public class ClusterScraper {

@@ -24,7 +24,7 @@ services:
       depends_on:
         postgres1:
           condition: service_healthy
-      image: com.github.eyefloaters/kmetadb:latest
+      image: com.github.streamshub/kmetadb:latest
       networks:
       - kmetadbnet
       ports:
