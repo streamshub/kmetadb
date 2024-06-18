@@ -1,4 +1,4 @@
-package com.github.eyefloaters.kmetadb;
+package com.github.streamshub.kmetadb;
 
 public class ShutdownException extends RuntimeException {
 

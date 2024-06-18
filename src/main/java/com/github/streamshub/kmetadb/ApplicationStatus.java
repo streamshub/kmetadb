@@ -1,4 +1,4 @@
-package com.github.eyefloaters.kmetadb;
+package com.github.streamshub.kmetadb;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 

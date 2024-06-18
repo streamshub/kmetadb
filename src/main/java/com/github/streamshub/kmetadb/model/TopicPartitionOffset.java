@@ -1,4 +1,4 @@
-package com.github.eyefloaters.kmetadb.model;
+package com.github.streamshub.kmetadb.model;
 
 import java.time.Instant;
 

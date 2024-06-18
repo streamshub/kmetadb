@@ -1,4 +1,4 @@
-package com.github.eyefloaters.kmetadb;
+package com.github.streamshub.kmetadb;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -41,7 +41,7 @@ import org.eclipse.microprofile.context.ManagedExecutor;
 import org.jboss.logging.Logger;
 import org.jboss.logging.MDC;
 
-import com.github.eyefloaters.kmetadb.model.Cluster;
+import com.github.streamshub.kmetadb.model.Cluster;
 
 @ApplicationScoped
 public class DataSync {
